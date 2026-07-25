@@ -51,6 +51,9 @@ function rememberActiveSession(session) {
 /* ---------- App shell ---------- */
 
 function setMode(mode) {
+  const wasExternalAgent = window.ExternalAgentMode?.isAgentMode?.(state.mode);
+  const isExternalAgent = window.ExternalAgentMode?.isAgentMode?.(mode);
+  if (wasExternalAgent && !isExternalAgent) window.ExternalAgentMode?.exit?.();
   state.mode = mode;
   if (mode === 'chat' && state.session?.mode === 'image') {
     const target = state.sessions.find((item) => item.id === state.lastChatSessionId && item.mode !== 'image')
@@ -71,14 +74,16 @@ function setMode(mode) {
     btn.classList.toggle('is-active', btn.dataset.mode === mode);
   });
   $all('.list-panel').forEach((el) => {
-    el.classList.toggle('is-active', el.dataset.panel === mode);
+    el.classList.toggle('is-active', el.dataset.panel === (isExternalAgent ? 'external-agent' : mode));
   });
   $all('.main-view').forEach((el) => {
-    el.classList.toggle('is-active', el.dataset.view === mode);
+    el.classList.toggle('is-active', el.dataset.view === (isExternalAgent ? 'external-agent' : mode));
   });
   renderSessions();
   if (window.ImageMode) window.ImageMode.renderImageSessionList();
-  if (mode === 'image') {
+  if (isExternalAgent) {
+    window.ExternalAgentMode?.enter?.(mode.slice('agent-'.length));
+  } else if (mode === 'image') {
     // Image mode owns its canvas inside the main studio; the right pane remains for chat/files/browser.
     setRightOpen(false);
     if (window.ImageMode) {
@@ -131,6 +136,12 @@ function setRightOpen(open) {
     btn.classList.toggle('is-active', open);
     btn.setAttribute('aria-pressed', open ? 'true' : 'false');
     btn.title = open ? '收起侧栏' : '打开侧栏';
+  }
+  const externalBtn = $('#external-toggle-workspace');
+  if (externalBtn) {
+    externalBtn.classList.toggle('is-active', open);
+    externalBtn.setAttribute('aria-pressed', open ? 'true' : 'false');
+    externalBtn.title = open ? '收起工作区' : '打开工作区';
   }
   if (open) renderRightPane();
 }
@@ -3250,6 +3261,11 @@ function renderRightPane() {
   const pane = $('#right-pane');
   if (!pane) return;
 
+  if (window.ExternalAgentMode?.isAgentMode?.(state.mode)) {
+    window.ExternalAgentMode.renderWorkspace?.();
+    return;
+  }
+
   if (!state.rightTabs.some((tab) => tab.id === state.activeRightTabId)) {
     state.activeRightTabId = state.rightTabs[0]?.id || null;
   }
@@ -4262,6 +4278,7 @@ async function boot() {
     uid,
     nowIso,
     setMode,
+    setRightOpen,
     persistSettings,
     refreshSessions: async () => {
       const sessions = await invoke('list_sessions');

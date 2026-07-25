@@ -6,7 +6,9 @@
     <meta name="theme-color" content="#ffffff" />
     <title>WePChat</title>
     <link rel="stylesheet" href="./libs/katex/katex.min.css" />
+    <link rel="stylesheet" href="./libs/xterm/xterm.css" />
     <link rel="stylesheet" href="./css/app.css" />
+    <link rel="stylesheet" href="./css/external-agent-mode.css" />
   </head>
   <body>
     <div id="app" class="app">
@@ -74,6 +76,15 @@
               />
             </svg>
           </button>
+          <button type="button" class="rail-btn rail-agent-btn" data-mode="agent-codex" data-agent-rail="codex" title="Codex" aria-label="Codex" hidden>
+            <span class="rail-agent-brand" data-agent-icon="codex" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="rail-btn rail-agent-btn" data-mode="agent-pi" data-agent-rail="pi" title="Pi" aria-label="Pi" hidden>
+            <span class="rail-agent-brand" data-agent-icon="pi" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="rail-btn rail-agent-btn" data-mode="agent-claude" data-agent-rail="claude" title="Claude Code" aria-label="Claude Code" hidden>
+            <span class="rail-agent-brand" data-agent-icon="claude" aria-hidden="true"></span>
+          </button>
         </div>
         <div class="rail-bottom">
           <button type="button" class="rail-btn" data-mode="settings" title="设置" aria-label="设置">
@@ -139,6 +150,33 @@
             </div>
             <ul class="session-list" id="image-session-list" hidden></ul>
           </div>
+        </section>
+
+        <section class="list-panel external-agent-list-panel" data-panel="external-agent">
+          <header class="external-list-head">
+            <div class="external-list-agent">
+              <span class="external-brand-mark" id="external-list-brand" aria-hidden="true"></span>
+              <div>
+                <h1 class="list-title" id="external-list-title">Codex</h1>
+                <span class="external-preview-label">本地工作区</span>
+              </div>
+            </div>
+            <button type="button" class="icon-btn" id="external-add-project" title="添加项目" aria-label="添加项目">
+              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                <path fill="currentColor" d="M10 4l2 2h8c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2h6zm3 6h-2v3H8v2h3v3h2v-3h3v-2h-3v-3z"/>
+              </svg>
+            </button>
+          </header>
+          <div class="list-search external-project-search">
+            <input type="search" id="external-project-search" placeholder="搜索项目或会话" aria-label="搜索项目或会话" />
+          </div>
+          <div class="external-project-tree" id="external-project-tree" role="tree"></div>
+          <footer class="external-list-foot">
+            <span class="external-status-dot"></span>
+            <span>界面预览</span>
+            <span class="external-list-foot-sep">·</span>
+            <span>按需启动连接</span>
+          </footer>
         </section>
 
         <section class="list-panel" data-panel="settings">
@@ -342,6 +380,72 @@
           </div>
         </section>
 
+        <section class="main-view external-agent-view" data-view="external-agent">
+          <header class="external-main-top">
+            <div class="external-session-meta">
+              <div class="external-session-title-row">
+                <strong id="external-main-session-title">完善外部 Agent UI</strong>
+                <span class="external-runtime-state is-disconnected" id="external-runtime-state">未连接</span>
+              </div>
+            </div>
+            <div class="external-main-actions">
+              <button type="button" class="external-context-meter" id="external-context-meter" title="上下文用量">
+                <span class="external-context-ring" aria-hidden="true"></span>
+                <span id="external-context-label">18%</span>
+              </button>
+              <div class="external-open-wrap">
+                <button type="button" class="external-open-project" id="external-open-project" aria-haspopup="menu" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M10 4 8 6H4v14h16V4h-10Zm8 14H6V8h12v10Zm-8.7-3.3 1.4 1.4 4-4-4-4-1.4 1.4L12 12l-2.7 2.7Z"/></svg>
+                  <span>打开位置</span>
+                  <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="m7 10 5 5 5-5z"/></svg>
+                </button>
+                <div class="external-popover external-open-menu" id="external-open-menu" role="menu" hidden></div>
+              </div>
+              <button type="button" class="tool-btn is-active" id="external-toggle-workspace" title="收起工作区" aria-label="收起工作区" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 5v14h18V5H3zm16 12H9V7h10v10z"/></svg>
+              </button>
+            </div>
+          </header>
+
+          <div class="external-chat-scroll" id="external-chat-scroll" aria-live="polite"></div>
+
+          <footer class="external-composer">
+            <div class="external-composer-box">
+              <div class="external-composer-attachments" id="external-composer-attachments" hidden></div>
+              <button type="button" class="icon-btn external-attach" id="external-attach" title="添加图片" aria-label="添加图片">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a3 3 0 0 1 6 0v11.5a1.5 1.5 0 0 1-3 0V6H12v10.5a.5.5 0 0 0 1 0V5a2.5 2.5 0 0 0-5 0v12.5a4 4 0 0 0 8 0V6h.5z"/></svg>
+              </button>
+              <input type="file" id="external-image-input" accept="image/*" hidden />
+              <textarea id="external-composer-input" rows="1" placeholder="给 Agent 分配任务"></textarea>
+              <div class="external-composer-tools">
+                <div class="external-popover-wrap">
+                  <button type="button" class="external-composer-select" id="external-permission-toggle" aria-haspopup="menu" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm0 2.2 5.8 2.2V11c0 3.9-2.4 7.4-5.8 8.6C8.6 18.4 6.2 14.9 6.2 11V6.4L12 4.2Z"/></svg>
+                    <span id="external-permission-label">请求批准</span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="m7 10 5 5 5-5z"/></svg>
+                  </button>
+                  <div class="external-popover external-permission-menu" id="external-permission-menu" role="menu" hidden></div>
+                </div>
+                <div class="external-popover-wrap">
+                  <button type="button" class="external-composer-select" id="external-model-toggle" aria-haspopup="menu" aria-expanded="false" disabled>
+                    <span id="external-model-label">模型</span>
+                    <span class="external-composer-effort" id="external-effort-label"></span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="m7 10 5 5 5-5z"/></svg>
+                  </button>
+                  <div class="external-popover external-model-menu" id="external-model-menu" role="menu" hidden></div>
+                </div>
+              </div>
+              <button type="button" class="send-btn" id="external-send" title="发送" aria-label="发送" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg>
+              </button>
+            </div>
+          </footer>
+          <div class="chat-rail external-chat-rail" id="external-chat-rail" aria-label="消息位置" hidden>
+            <div class="chat-rail-viewport"><div class="chat-rail-track" id="external-chat-rail-track"></div></div>
+            <div class="chat-rail-tip" id="external-chat-rail-tip" hidden></div>
+          </div>
+        </section>
+
         <section class="main-view" data-view="settings">
           <div class="settings-content" id="settings-content">
             <div class="settings-page is-active" data-settings-page="providers">
@@ -486,7 +590,7 @@
 
             <div class="settings-page" data-settings-page="external">
               <h2 class="settings-h">外部连接</h2>
-              <p class="settings-p">高级功能。当前仅保留设置、检测和启用状态；连接方案会在新计划确定后重新实现。</p>
+              <p class="settings-p">按需启用本地 Agent 工作区。启用后，入口会显示在最左侧导航；只有发送任务时才会启动连接。</p>
               <div class="settings-card">
                 <div class="settings-row">
                   <div class="settings-row-text">
@@ -500,7 +604,7 @@
               <div class="settings-card external-agent-list" id="external-agent-list">
                 <div class="settings-row external-agent-row" data-agent-kind="codex">
                   <div class="settings-row-text">
-                    <span class="settings-row-title">Codex</span>
+                    <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="codex" aria-hidden="true"></span>Codex</span>
                     <span class="settings-row-sub" id="external-codex-status">未检测 · 目标协议：JSON-RPC</span>
                   </div>
                   <div class="external-agent-controls">
@@ -515,7 +619,7 @@
 
                 <div class="settings-row external-agent-row" data-agent-kind="claude">
                   <div class="settings-row-text">
-                    <span class="settings-row-title">Claude Code</span>
+                    <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="claude" aria-hidden="true"></span>Claude Code</span>
                     <span class="settings-row-sub" id="external-claude-status">未检测 · 目标协议：CLI</span>
                   </div>
                   <div class="external-agent-controls">
@@ -530,7 +634,7 @@
 
                 <div class="settings-row external-agent-row" data-agent-kind="pi">
                   <div class="settings-row-text">
-                    <span class="settings-row-title">Pi</span>
+                    <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="pi" aria-hidden="true"></span>Pi</span>
                     <span class="settings-row-sub" id="external-pi-status">未检测 · 目标协议：JSON-RPC</span>
                   </div>
                   <div class="external-agent-controls">
@@ -886,6 +990,8 @@
     <script src="./libs/highlight.min.js"></script>
     <script src="./libs/katex/katex.min.js"></script>
     <script src="./libs/katex/auto-render.min.js"></script>
+    <script src="./libs/xterm/xterm.js"></script>
+    <script src="./libs/xterm/addon-fit.js"></script>
     <script src="./js/runtime.js"></script>
     <script src="./js/ui-dialog.js"></script>
     <script src="./js/markdown.js"></script>

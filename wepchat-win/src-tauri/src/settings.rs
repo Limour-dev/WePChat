@@ -237,10 +237,7 @@ impl SettingsStore {
 
     /// Default: Documents/WePChat/workspaces
     pub fn default_workspace_root(app: &AppHandle) -> Result<String, String> {
-        let docs = app
-            .path()
-            .document_dir()
-            .map_err(|e| e.to_string())?;
+        let docs = app.path().document_dir().map_err(|e| e.to_string())?;
         Ok(docs
             .join("WePChat")
             .join("workspaces")
@@ -248,7 +245,10 @@ impl SettingsStore {
             .into_owned())
     }
 
-    pub fn resolve_workspace_root(app: &AppHandle, settings: &AppSettings) -> Result<String, String> {
+    pub fn resolve_workspace_root(
+        app: &AppHandle,
+        settings: &AppSettings,
+    ) -> Result<String, String> {
         match settings
             .workspace_root
             .as_ref()

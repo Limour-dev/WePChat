@@ -1,4 +1,4 @@
-//! Session storage on SQLite: `{workspaceRoot}/wepchat.db`（见 docs/sqlite-storage-plan.md）。
+//! Session storage on SQLite: `{workspaceRoot}/wepchat.db`。
 //! 每个会话仍拥有自己的工作区目录 `{workspaceRoot}/{sessionId}/`（工具文件、生成图片），
 //! 但会话数据（消息、variants、usage 等）进库，不再读写 session.json。
 //!

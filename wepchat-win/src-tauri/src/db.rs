@@ -1,6 +1,6 @@
 //! SQLite storage engine for sessions (`{workspaceRoot}/wepchat.db`).
 //!
-//! 设计要点（docs/sqlite-storage-plan.md）：
+//! 设计要点：
 //! - 库跟随工作区根目录：换 root 即换数据集；连接按 root 缓存，切 root 时重开。
 //! - WAL + 单写连接（`Mutex` 串行）足够覆盖桌面单用户场景。
 //! - 打开时 `quick_check`；失败则把坏库改名 `wepchat.db.corrupt-{ts}` 后重建。

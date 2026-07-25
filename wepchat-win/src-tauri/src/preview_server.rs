@@ -245,7 +245,11 @@ fn handle_client(mut stream: TcpStream, session: SessionPreview) {
     }
     // 隔离绘制 harness：postMessage 接收端，见 HARNESS_HTML
     if segs.len() == 2 && segs[1] == "__wep_preview__" {
-        let body: &[u8] = if method == "HEAD" { &[] } else { HARNESS_HTML.as_bytes() };
+        let body: &[u8] = if method == "HEAD" {
+            &[]
+        } else {
+            HARNESS_HTML.as_bytes()
+        };
         write_response(&mut stream, "200 OK", "text/html; charset=utf-8", body);
         return;
     }
@@ -384,10 +388,7 @@ pub fn preview_ensure(app: AppHandle, args: PreviewSessionArgs) -> Result<Previe
     if let Some(existing) = map.get(&args.session_id) {
         if existing.root == dir && !existing.stop.load(Ordering::SeqCst) {
             return Ok(PreviewInfo {
-                base_url: format!(
-                    "http://127.0.0.1:{}/{}/",
-                    existing.port, existing.token
-                ),
+                base_url: format!("http://127.0.0.1:{}/{}/", existing.port, existing.token),
                 port: existing.port,
                 token: existing.token.clone(),
                 session_id: args.session_id,

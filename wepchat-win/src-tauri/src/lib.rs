@@ -1,12 +1,24 @@
 mod db;
 mod external_agent;
+mod external_open;
+mod external_project;
+mod external_terminal;
 mod http_client;
 mod preview_server;
 mod sessions;
 mod settings;
 mod workspace_fs;
 
-use external_agent::{external_agent_detect_all, external_agent_supported};
+use external_agent::{
+    codex_disconnect, codex_request, codex_respond, codex_status, external_agent_detect,
+    external_agent_detect_all, external_agent_supported, CodexAppServer,
+};
+use external_project::{external_project_list, external_project_read};
+use external_open::{external_project_open, external_project_open_targets};
+use external_terminal::{
+    powershell_terminal_open, powershell_terminal_resize, powershell_terminal_write,
+    PowerShellTerminal,
+};
 use http_client::{http_request, http_stream, http_stream_abort, AbortRegistry};
 use preview_server::{preview_ensure, preview_stage, preview_stop, preview_unstage};
 use serde_json::Value;
@@ -104,6 +116,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(http_client::new_abort_registry() as AbortRegistry)
+        .manage(CodexAppServer::default())
+        .manage(PowerShellTerminal::default())
         .setup(|app| {
             let handle = app.handle().clone();
             if let Ok(settings) = SettingsStore::load(&handle) {
@@ -116,8 +130,10 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|_, event| {
+        .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                window.state::<CodexAppServer>().shutdown();
+                window.state::<PowerShellTerminal>().shutdown();
                 let _ = db::checkpoint_truncate();
             }
         })
@@ -156,7 +172,19 @@ pub fn run() {
             preview_unstage,
             preview_stop,
             external_agent_supported,
+            external_agent_detect,
             external_agent_detect_all,
+            codex_request,
+            codex_respond,
+            codex_status,
+            codex_disconnect,
+            powershell_terminal_open,
+            powershell_terminal_write,
+            powershell_terminal_resize,
+            external_project_list,
+            external_project_read,
+            external_project_open_targets,
+            external_project_open,
         ])
         .run(tauri::generate_context!())
         .expect("error while running WePChat");

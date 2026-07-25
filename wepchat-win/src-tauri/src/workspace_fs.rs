@@ -402,16 +402,17 @@ fn look_binary(bytes: &[u8]) -> bool {
     }
     let sample = &bytes[..bytes.len().min(4096)];
     sample.iter().filter(|&&b| b == 0).count() > 0
-        || sample.iter().filter(|&&b| b < 9 && b != 9 && b != 10 && b != 13).count() > sample.len() / 10
+        || sample
+            .iter()
+            .filter(|&&b| b < 9 && b != 9 && b != 10 && b != 13)
+            .count()
+            > sample.len() / 10
 }
 
 fn read_text_file(path: &Path) -> Result<String, String> {
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     if meta.len() > MAX_FILE_BYTES {
-        return Err(format!(
-            "文件超过 {} 上限",
-            fmt_size(MAX_FILE_BYTES)
-        ));
+        return Err(format!("文件超过 {} 上限", fmt_size(MAX_FILE_BYTES)));
     }
     let mut f = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
@@ -435,9 +436,7 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8], max_bytes: u64) -> Result<(), S
     }
     let tmp = path.parent().unwrap_or(Path::new(".")).join(format!(
         ".{}.wepchat.tmp",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
     ));
     {
         let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
@@ -466,9 +465,7 @@ fn decode_base64_content(raw: &str) -> Result<Vec<u8>, String> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD
         .decode(cleaned.as_bytes())
-        .or_else(|_| {
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cleaned.as_bytes())
-        })
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cleaned.as_bytes()))
         .map_err(|e| format!("base64 解码失败: {e}"))
 }
 
@@ -498,20 +495,15 @@ fn parse_line_range(spec: &str, total: usize) -> Result<Option<(usize, usize)>, 
             return Err("lines 参数格式错误，示例：1-20、1-、-30".into());
         }
         if a.is_empty() {
-            let count: usize = b
-                .parse()
-                .map_err(|_| "lines 参数格式错误".to_string())?;
+            let count: usize = b.parse().map_err(|_| "lines 参数格式错误".to_string())?;
             let start = total.saturating_sub(count).saturating_add(1).max(1);
             return Ok(Some((start, total.max(1))));
         }
-        let start: usize = a
-            .parse()
-            .map_err(|_| "lines 参数格式错误".to_string())?;
+        let start: usize = a.parse().map_err(|_| "lines 参数格式错误".to_string())?;
         let end = if b.is_empty() {
             total.max(1)
         } else {
-            b.parse()
-                .map_err(|_| "lines 参数格式错误".to_string())?
+            b.parse().map_err(|_| "lines 参数格式错误".to_string())?
         };
         if start == 0 {
             return Err("行号从 1 开始".into());
@@ -556,11 +548,7 @@ fn diff_text(path: &str, before: &str, after: &str) -> String {
     let a: Vec<&str> = before.split('\n').collect();
     let b: Vec<&str> = after.split('\n').collect();
     let max = a.len().max(b.len());
-    let mut lines = vec![
-        format!("--- {path}"),
-        format!("+++ {path}"),
-        "@@".into(),
-    ];
+    let mut lines = vec![format!("--- {path}"), format!("+++ {path}"), "@@".into()];
     for i in 0..max {
         let left = a.get(i).copied();
         let right = b.get(i).copied();
@@ -739,7 +727,9 @@ pub fn ws_read(app: AppHandle, args: WsReadArgs) -> Result<WsTextResult, String>
         Err(e) => return err_text(e),
     };
     if !path.exists() {
-        return err_text(format!("文件不存在: {rel}。请先 list_files 或 write_file。"));
+        return err_text(format!(
+            "文件不存在: {rel}。请先 list_files 或 write_file。"
+        ));
     }
     if path.is_dir() {
         return err_text(format!("路径是目录，不是文件: {rel}"));
@@ -762,7 +752,12 @@ pub fn ws_write(app: AppHandle, args: WsWriteArgs) -> Result<WsTextResult, Strin
         Ok(r) => r,
         Err(e) => return err_text(e),
     };
-    if is_hidden_entry(Path::new(&rel).file_name().and_then(|n| n.to_str()).unwrap_or("")) {
+    if is_hidden_entry(
+        Path::new(&rel)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(""),
+    ) {
         return err_text("不能写入系统保留文件");
     }
     let path = match resolve_in_workspace(&workspace, &rel) {
@@ -830,7 +825,8 @@ pub fn ws_write(app: AppHandle, args: WsWriteArgs) -> Result<WsTextResult, Strin
             format!("\n\n{d}")
         }
     );
-    let changes = vec![json!({ "path": rel, "operation": if existed { "updated" } else { "created" } })];
+    let changes =
+        vec![json!({ "path": rel, "operation": if existed { "updated" } else { "created" } })];
     emit_changed(&app, &args.session_id, &changes);
     let _ = args.mime; // reserved for text writes
     Ok(ok_with_changes(truncate_output(&msg), changes))
@@ -862,7 +858,13 @@ pub fn ws_read_bytes(app: AppHandle, args: WsPathArgs) -> Result<Value, String> 
     }))
 }
 
-fn regex_replace(before: &str, find: &str, replace: &str, all: bool, flags: &str) -> Result<String, String> {
+fn regex_replace(
+    before: &str,
+    find: &str,
+    replace: &str,
+    all: bool,
+    flags: &str,
+) -> Result<String, String> {
     let mut flag_chars: String = flags
         .chars()
         .filter(|c| matches!(c, 'i' | 'm' | 's' | 'u' | 'x'))
@@ -885,7 +887,9 @@ fn regex_replace(before: &str, find: &str, replace: &str, all: bool, flags: &str
     if flag_chars.contains('x') {
         builder.ignore_whitespace(true);
     }
-    let re = builder.build().map_err(|e| format!("正则表达式无效: {e}"))?;
+    let re = builder
+        .build()
+        .map_err(|e| format!("正则表达式无效: {e}"))?;
     if !re.is_match(before) {
         return Err(format!(
             "未找到匹配内容，当前文件前 200 字符为：\n{}",
@@ -899,7 +903,12 @@ fn regex_replace(before: &str, find: &str, replace: &str, all: bool, flags: &str
     }
 }
 
-fn replace_ignoring_whitespace(before: &str, find: &str, replace: &str, all: bool) -> Result<String, String> {
+fn replace_ignoring_whitespace(
+    before: &str,
+    find: &str,
+    replace: &str,
+    all: bool,
+) -> Result<String, String> {
     let needle: String = find.chars().filter(|c| !c.is_whitespace()).collect();
     if needle.is_empty() {
         return Err("ignoreWhitespace 模式下 find 不能只包含空白字符".into());
@@ -966,7 +975,9 @@ pub fn ws_edit(app: AppHandle, args: WsEditArgs) -> Result<WsTextResult, String>
         Err(e) => return err_text(e),
     };
     if !path.is_file() {
-        return err_text(format!("文件不存在: {rel}。请先 list_files 或 write_file。"));
+        return err_text(format!(
+            "文件不存在: {rel}。请先 list_files 或 write_file。"
+        ));
     }
     if args.find.is_empty() {
         return err_text("缺少 find 参数");
@@ -1020,7 +1031,11 @@ pub fn ws_edit(app: AppHandle, args: WsEditArgs) -> Result<WsTextResult, String>
     } else {
         "精确"
     };
-    let scope = if args.all { "全部匹配" } else { "首个匹配" };
+    let scope = if args.all {
+        "全部匹配"
+    } else {
+        "首个匹配"
+    };
     let d = diff_text(&rel, &before, &after);
     let msg = format!("已修改 {rel}（{mode}，{scope}）\n\n{d}");
     let changes = vec![json!({ "path": rel, "operation": "updated" })];
@@ -1169,9 +1184,7 @@ pub fn ws_move(app: AppHandle, args: WsMoveArgs) -> Result<WsTextResult, String>
     }
 
     if to_path.exists() && !args.overwrite {
-        return err_text(format!(
-            "目标已存在: {to}。如需覆盖，请传 overwrite: true"
-        ));
+        return err_text(format!("目标已存在: {to}。如需覆盖，请传 overwrite: true"));
     }
     if to_path.exists() && args.overwrite {
         if to_path.is_dir() {
@@ -1184,7 +1197,11 @@ pub fn ws_move(app: AppHandle, args: WsMoveArgs) -> Result<WsTextResult, String>
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::rename(&from_path, &to_path).map_err(|e| e.to_string())?;
-    let kind = if to_path.is_dir() { "文件夹" } else { "文件" };
+    let kind = if to_path.is_dir() {
+        "文件夹"
+    } else {
+        "文件"
+    };
     let msg = format!("已移动{kind} {from} -> {to}");
     let changes = vec![
         json!({ "path": from, "operation": "deleted" }),
@@ -1319,8 +1336,7 @@ pub fn ws_reveal_path(app: AppHandle, args: WsPathArgs) -> Result<(), String> {
     let workspace = workspace_dir(&app, &args.session_id)?;
     let rel = normalize_rel(&args.path, true)?;
     if rel.is_empty() {
-        return tauri_plugin_opener::open_path(workspace, None::<&str>)
-            .map_err(|e| e.to_string());
+        return tauri_plugin_opener::open_path(workspace, None::<&str>).map_err(|e| e.to_string());
     }
     let path = resolve_in_workspace(&workspace, &rel)?;
     if !path.exists() {
