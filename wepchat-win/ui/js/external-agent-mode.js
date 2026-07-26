@@ -45,6 +45,24 @@ const CODEX_PERMISSIONS = {
   },
 };
 
+const CLAUDE_PERMISSIONS = {
+  request: {
+    label: '请求批准',
+    description: '危险操作需要你的批准',
+    mode: 'default',
+  },
+  onFailure: {
+    label: '替我批准',
+    description: '自动接受文件编辑，其余仍需批准',
+    mode: 'acceptEdits',
+  },
+  fullAccess: {
+    label: '完全访问权限',
+    description: '跳过所有权限检查',
+    mode: 'bypassPermissions',
+  },
+};
+
 const ICONS = {
   codex: `
     <svg class="agent-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -73,13 +91,23 @@ let responseTimer = 0;
 let codexModels = [];
 let codexReadyPromise = null;
 let codexUnlisten = null;
+let claudeModels = [];
+let claudeUnlisten = null;
+let claudeRenderTimer = 0;
 let powerShellUnlisten = null;
 let xtermSession = null;
 let composerAttachments = [];
 let projectOpenTargets = null;
 const codexReadyThreads = new Set();
 const codexFileCache = new Map();
+const claudeAliveKeys = new Set();
+const claudeStartPromises = new Map();
 const powerShellBuffers = new Map();
+
+/** codex 与 claude 走真实连接；pi 仍是 mock。 */
+function isLiveKind(kind = activeKind) {
+  return kind === 'codex' || kind === 'claude';
+}
 
 function appendPowerShellOutput(terminalId, text) {
   const buffer = `${powerShellBuffers.get(terminalId) || ''}${text || ''}`;
@@ -184,11 +212,16 @@ function supportedEfforts(model = selectedCodexModel()) {
 }
 
 function effortLabel(value) {
-  return ({ none: '无', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '极高' })[value] || '';
+  return ({ none: '无', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大' })[value] || '';
+}
+
+function permissionTable(kind = activeKind) {
+  return kind === 'claude' ? CLAUDE_PERMISSIONS : CODEX_PERMISSIONS;
 }
 
 function permissionProfile() {
-  return CODEX_PERMISSIONS[mockData.codex.permission] || CODEX_PERMISSIONS.request;
+  const table = permissionTable();
+  return table[currentAgentState().permission] || table.request;
 }
 
 function closeExternalPopovers(except = null) {
@@ -335,8 +368,11 @@ function createSeedData() {
     },
     claude: {
       selectedSessionId: 'claude-session-shell',
-      model: 'claude-sonnet-4.5',
-      context: 9,
+      model: '',
+      effort: '',
+      permission: 'request',
+      context: 0,
+      contextKnown: false,
       projects: [
         {
           id: 'claude-project-wepchat',
@@ -360,7 +396,7 @@ function loadMockData() {
     if (!saved || typeof saved !== 'object') return fallback;
     AGENTS.forEach(({ kind }) => {
       if (!saved[kind]?.projects?.length) saved[kind] = fallback[kind];
-      saved[kind].permission ||= kind === 'codex' ? 'request' : '';
+      saved[kind].permission ||= kind === 'pi' ? '' : 'request';
       saved[kind].effort ||= '';
       saved[kind].contextKnown = !!saved[kind].contextKnown;
     });
@@ -464,6 +500,15 @@ async function saveSettings() {
     codexFileCache.clear();
     clearCodexRuntime(false);
     mockData.codex.connectionStatus = 'disconnected';
+  }
+  const claudeConfigChanged = previousExternal.agents?.claude?.commandPath !== nextExternal.agents?.claude?.commandPath;
+  if (!nextExternal.enabled || !nextExternal.agents?.claude?.enabled || claudeConfigChanged) {
+    await deps.invoke('claude_stop_all').catch(() => {});
+    claudeAliveKeys.clear();
+    claudeStartPromises.clear();
+    claudeModels = [];
+    clearClaudeRuntime(false);
+    mockData.claude.connectionStatus = 'disconnected';
   }
   syncNavigation(nextExternal);
   if (status) status.textContent = '已保存';
@@ -640,22 +685,54 @@ function renderComposerAttachments() {
 }
 
 function renderPermissionMenu() {
-  const selected = mockData.codex.permission || 'request';
+  const selected = currentAgentState().permission || 'request';
+  const table = permissionTable();
   const label = $('#external-permission-label');
   if (label) label.textContent = permissionProfile().label;
   const menu = $('#external-permission-menu');
   if (!menu) return;
-  menu.innerHTML = Object.entries(CODEX_PERMISSIONS).map(([id, profile]) => `
+  menu.innerHTML = Object.entries(table).map(([id, profile]) => `
     <button type="button" class="external-menu-option${id === selected ? ' is-selected' : ''}" data-external-permission="${id}" role="menuitemradio" aria-checked="${id === selected}">
       <span><strong>${escapeHtml(profile.label)}</strong><small>${escapeHtml(profile.description)}</small></span>
       ${id === selected ? '<b aria-hidden="true">&#10003;</b>' : ''}
     </button>`).join('');
 }
 
+function selectedClaudeModel() {
+  return claudeModels.find((model) => model.value === mockData.claude.model) || null;
+}
+
+function renderClaudeModelMenu(button, label, effort, menu) {
+  const connected = claudeModels.length > 0;
+  const model = selectedClaudeModel();
+  if (button) button.disabled = !connected;
+  if (label) label.textContent = model?.displayName || mockData.claude.currentModel || '模型';
+  if (effort) effort.textContent = connected && mockData.claude.effort ? effortLabel(mockData.claude.effort) || mockData.claude.effort : '';
+  if (!menu) return;
+  if (!connected) {
+    menu.innerHTML = '';
+    return;
+  }
+  const efforts = model?.supportsEffort ? (model.supportedEffortLevels || []) : [];
+  menu.innerHTML = `
+    <div class="external-menu-section"><span>模型</span>${claudeModels.map((item) => `
+      <button type="button" class="external-menu-option external-model-option${item.value === model?.value ? ' is-selected' : ''}" data-external-model="${escapeHtml(item.value)}" role="menuitemradio" aria-checked="${item.value === model?.value}">
+        <strong>${escapeHtml(item.displayName || item.value)}</strong>${item.value === model?.value ? '<b aria-hidden="true">&#10003;</b>' : ''}
+      </button>`).join('')}</div>
+    ${efforts.length ? `<div class="external-menu-section"><span>推理强度</span>${efforts.map((value) => `
+      <button type="button" class="external-menu-option external-model-option${mockData.claude.effort === value ? ' is-selected' : ''}" data-external-effort="${escapeHtml(value)}" role="menuitemradio" aria-checked="${mockData.claude.effort === value}">
+        <strong>${escapeHtml(effortLabel(value) || value)}</strong>${mockData.claude.effort === value ? '<b aria-hidden="true">&#10003;</b>' : ''}
+      </button>`).join('')}</div>` : ''}`;
+}
+
 function renderModelMenu() {
   const button = $('#external-model-toggle');
   const label = $('#external-model-label');
   const effort = $('#external-effort-label');
+  if (activeKind === 'claude') {
+    renderClaudeModelMenu(button, label, effort, $('#external-model-menu'));
+    return;
+  }
   const model = selectedCodexModel();
   const connected = activeKind === 'codex' && mockData.codex.connectionStatus === 'connected' && !!model;
   if (button) button.disabled = !connected;
@@ -770,11 +847,11 @@ function renderMessages() {
     }).join('');
     const approval = message.approval && !message.approval.resolved ? `
       <section class="external-approval" data-approval-message="${escapeHtml(message.id)}">
-        <div class="external-approval-head"><strong>${message.approval.kind === 'file' ? 'Codex 请求修改文件' : message.approval.kind === 'network' ? 'Codex 请求访问网络' : 'Codex 请求运行命令'}</strong><small>${escapeHtml(message.approval.reason || '需要你的确认后才能继续')}</small></div>
+        <div class="external-approval-head"><strong>${escapeHtml(agentMeta().label)} ${message.approval.kind === 'file' ? '请求修改文件' : message.approval.kind === 'network' ? '请求访问网络' : '请求运行命令'}</strong><small>${escapeHtml(message.approval.reason || '需要你的确认后才能继续')}</small></div>
         <pre>${escapeHtml(message.approval.detail || '')}</pre>
         <div class="external-approval-actions">
           <button type="button" class="secondary-btn" data-codex-decision="decline">拒绝</button>
-          <button type="button" class="secondary-btn" data-codex-decision="acceptForSession">本会话允许</button>
+          ${message.approval.suppressAlways ? '' : '<button type="button" class="secondary-btn" data-codex-decision="acceptForSession">本会话允许</button>'}
           <button type="button" class="primary-btn" data-codex-decision="accept">允许一次</button>
         </div>
       </section>` : '';
@@ -809,7 +886,7 @@ function renderComposerState() {
   const send = $('#external-send');
   const input = $('#external-composer-input');
   if (!send || !input) return;
-  const running = activeKind === 'codex' ? !!findSession()?.session?.running : !!currentAgentState().running;
+  const running = isLiveKind() ? !!findSession()?.session?.running : !!currentAgentState().running;
   const hasSession = !!findSession();
   const hasDraft = !!input.value.trim() || !!composerAttachments.length;
   input.disabled = !hasSession;
@@ -829,9 +906,19 @@ function renderComposerState() {
 function renderRuntimeState() {
   const host = $('#external-runtime-state');
   if (!host) return;
-  const status = activeKind === 'codex'
-    ? (findSession()?.session?.running ? 'working' : (mockData.codex.connectionStatus || 'disconnected'))
-    : 'mock';
+  let status = 'mock';
+  if (activeKind === 'codex') {
+    status = findSession()?.session?.running ? 'working' : (mockData.codex.connectionStatus || 'disconnected');
+  } else if (activeKind === 'claude') {
+    const session = findSession()?.session;
+    status = session?.running
+      ? 'working'
+      : session?.starting
+        ? 'connecting'
+        : session && claudeAliveKeys.has(session.id)
+          ? 'connected'
+          : mockData.claude.connectionStatus === 'error' ? 'error' : 'disconnected';
+  }
   const labels = {
     connected: '已连接',
     working: '工作中',
@@ -875,9 +962,18 @@ function renderAgentWorkspace() {
   const { session } = found;
 
   if ($('#external-main-session-title')) $('#external-main-session-title').textContent = session.title;
-  const context = Math.max(0, Math.min(100, Number(agentState.context) || 0));
+  const context = activeKind === 'claude'
+    ? Math.max(0, Math.min(100, Number(session.contextPct) || 0))
+    : Math.max(0, Math.min(100, Number(agentState.context) || 0));
   const meter = $('#external-context-meter');
-  if (meter) meter.hidden = activeKind !== 'codex' || !agentState.contextKnown;
+  if (meter) {
+    meter.hidden = activeKind === 'codex'
+      ? !agentState.contextKnown
+      : activeKind === 'claude' ? !session.contextKnown : true;
+    meter.title = activeKind === 'claude' && session.costUsd
+      ? `上下文用量 · 本会话累计 $${Number(session.costUsd).toFixed(4)}`
+      : '上下文用量';
+  }
   meter?.style.setProperty('--external-context', context);
   if ($('#external-context-label')) $('#external-context-label').textContent = `${context}%`;
   renderMessages();
@@ -1121,7 +1217,7 @@ function renderRightWorkspace() {
   renderExternalTabAddMenu();
 
   const selectedSession = findSession()?.session;
-  const reviewCount = activeKind === 'codex' ? changesFromDiff(selectedSession?.realDiff).length : 2;
+  const reviewCount = isLiveKind() ? changesFromDiff(selectedSession?.realDiff).length : 2;
   tabs.innerHTML = workspaceTabs.map((kind) => {
     const meta = workspaceTabMeta(kind);
     const count = kind === 'review' && reviewCount
@@ -1179,13 +1275,13 @@ function renderWorkspaceContent(tab) {
         </div>
       </section>`;
   }
-  const reviews = activeKind === 'codex'
+  const reviews = isLiveKind()
     ? (session.realDiff ? changesFromDiff(session.realDiff).map((item) => ({
       ...item,
       lines: item.diff.split(/\r?\n/).map((text) => ({ type: text.startsWith('+') && !text.startsWith('+++') ? 'add' : text.startsWith('-') && !text.startsWith('---') ? 'del' : 'ctx', text })),
     })) : [])
     : mockReviews();
-  if (!reviews.length) return '<div class="rp-empty"><p class="rp-empty-title">暂无文件变更</p><p class="rp-empty-desc">Codex 修改文件后会在这里显示本次会话的 diff</p></div>';
+  if (!reviews.length) return `<div class="rp-empty"><p class="rp-empty-title">暂无文件变更</p><p class="rp-empty-desc">${escapeHtml(agentMeta().label)} 修改文件后会在这里显示本次会话的 diff</p></div>`;
   const selected = currentAgentState().selectedReview || reviews[0].path;
   const review = reviews.find((item) => item.path === selected) || reviews[0];
   const totals = reviews.reduce((sum, item) => ({ added: sum.added + item.added, removed: sum.removed + item.removed }), { added: 0, removed: 0 });
@@ -1197,7 +1293,7 @@ function renderWorkspaceContent(tab) {
           <span>${escapeHtml(item.path)}</span><small>+${item.added} <i>-${item.removed}</i></small>
         </button>`).join('')}</div>
       <div class="external-diff">
-        <div class="external-file-preview-head"><span>${escapeHtml(review.path)}</span><small>${activeKind === 'codex' && session.realDiff ? 'Codex diff' : 'mock diff'}</small></div>
+        <div class="external-file-preview-head"><span>${escapeHtml(review.path)}</span><small>${isLiveKind() && session.realDiff ? (activeKind === 'claude' ? '工具调用汇总' : 'Codex diff') : 'mock diff'}</small></div>
         <pre>${review.lines.map((line, index) => `<span class="diff-${line.type}"><b>${index + 1}</b>${escapeHtml(line.text)}</span>`).join('')}</pre>
       </div>
     </section>`;
@@ -1298,6 +1394,10 @@ async function handleTreeAction(event) {
         params: { threadId: session.threadId, name: session.title },
       }).catch((error) => window.UIDialog?.toast?.(`Codex 会话重命名失败：${error?.message || error}`));
     }
+    if (activeKind === 'claude' && claudeAliveKeys.has(session.id)) {
+      claudeControl(session.id, 'rename_session', { title: session.title })
+        .catch((error) => window.UIDialog?.toast?.(`Claude Code 会话重命名失败：${error?.message || error}`));
+    }
   }
   if (action === 'delete-session' && session) {
     if (session.running) {
@@ -1313,6 +1413,11 @@ async function handleTreeAction(event) {
         window.UIDialog?.toast?.(`Codex 会话归档失败：${error?.message || error}`);
         return;
       }
+    }
+    if (activeKind === 'claude') {
+      // 只移除 WePChat 索引，不删 ~/.claude/projects 下的转录文件。
+      await deps.invoke('claude_stop', { sessionKey: session.id }).catch(() => {});
+      claudeAliveKeys.delete(session.id);
     }
     project.sessions = project.sessions.filter((item) => item.id !== session.id);
   }
@@ -1675,7 +1780,469 @@ async function respondCodexApproval(messageId, decision) {
 
 function sendMessage() {
   if (activeKind === 'codex') return sendCodexMessage();
+  if (activeKind === 'claude') return sendClaudeMessage();
   return sendMockMessage();
+}
+
+/* ---------- Claude Code（stream-json，每会话一个进程） ---------- */
+
+const CLAUDE_TOOL_LABELS = {
+  Bash: '运行命令',
+  Edit: '修改文件',
+  Write: '修改文件',
+  MultiEdit: '修改文件',
+  NotebookEdit: '修改文件',
+  Read: '读取文件',
+  Glob: '检索文件',
+  Grep: '检索内容',
+  Task: '子代理',
+  WebFetch: '访问网络',
+  WebSearch: '搜索网页',
+  TodoWrite: '更新计划',
+};
+
+function stripAnsi(value) {
+  // eslint-disable-next-line no-control-regex
+  return String(value ?? '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+}
+
+function claudeControl(sessionKey, subtype, params = {}) {
+  return deps.invoke('claude_control', { sessionKey, subtype, params });
+}
+
+function findClaudeSessionByKey(sessionKey) {
+  for (const project of mockData.claude.projects) {
+    const session = project.sessions.find((item) => item.id === sessionKey);
+    if (session) return { project, session };
+  }
+  return null;
+}
+
+function claudeAssistantMessage(session) {
+  return [...(session.messages || [])].reverse().find((message) => message.role === 'assistant');
+}
+
+function ensureClaudeAssistant(session) {
+  const last = claudeAssistantMessage(session);
+  if (last && (last.pending || session.running)) return last;
+  const created = { id: uid('eam'), role: 'assistant', content: '', time: nowLabel(), pending: true, steps: [] };
+  (session.messages ||= []).push(created);
+  return created;
+}
+
+function updateClaudeView(found, immediate = false) {
+  const render = () => {
+    claudeRenderTimer = 0;
+    persistMockData();
+    if (activeKind === 'claude' && found?.session?.id === mockData.claude.selectedSessionId) {
+      renderAgentWorkspace();
+    }
+  };
+  if (immediate) {
+    clearTimeout(claudeRenderTimer);
+    render();
+    return;
+  }
+  // 流式增量按 40ms 合并渲染，避免逐 token 全量重绘。
+  if (!claudeRenderTimer) claudeRenderTimer = window.setTimeout(render, 40);
+}
+
+function clearClaudeRuntime(markDisconnected = false) {
+  mockData.claude.running = false;
+  mockData.claude.projects.flatMap((project) => project.sessions).forEach((session) => {
+    if (markDisconnected && session.running) {
+      const assistant = claudeAssistantMessage(session);
+      if (assistant) {
+        assistant.pending = false;
+        assistant.content ||= 'Claude Code 连接已断开，请重新发送任务。';
+      }
+    }
+    session.running = false;
+    delete session.starting;
+  });
+}
+
+function claudeToolStep(block) {
+  const input = block.input || {};
+  const detail = input.command || input.file_path || input.notebook_path || input.pattern
+    || input.url || input.query || input.description
+    || (Array.isArray(input.todos) ? input.todos.map((todo) => todo?.subject || todo?.content).filter(Boolean).slice(0, 3).join(' · ') : '')
+    || '';
+  return {
+    id: block.id,
+    title: CLAUDE_TOOL_LABELS[block.name] || block.name || '执行工具',
+    detail: String(detail).slice(0, 200),
+    status: 'running',
+  };
+}
+
+/** M1 口径：从 Edit/Write 的 tool_use.input 合成 diff，喂现有审阅 UI。 */
+function registerClaudeChange(found, assistant, block) {
+  const input = block.input || {};
+  const rawPath = input.file_path || input.notebook_path || '';
+  if (!rawPath) return;
+  const path = projectRelativePath(found.project.path, rawPath) || rawPath;
+  let removed = [];
+  let added = [];
+  if (block.name === 'Edit') {
+    if (input.old_string) removed = String(input.old_string).split(/\r?\n/);
+    if (input.new_string) added = String(input.new_string).split(/\r?\n/);
+  } else if (block.name === 'Write') {
+    added = String(input.content || '').split(/\r?\n/);
+  } else if (block.name === 'MultiEdit') {
+    (input.edits || []).forEach((edit) => {
+      if (edit?.old_string) removed.push(...String(edit.old_string).split(/\r?\n/));
+      if (edit?.new_string) added.push(...String(edit.new_string).split(/\r?\n/));
+    });
+  } else if (block.name === 'NotebookEdit') {
+    added = String(input.new_source || '').split(/\r?\n/);
+  } else {
+    return;
+  }
+  if (!removed.length && !added.length) return;
+  const body = [...removed.map((line) => `-${line}`), ...added.map((line) => `+${line}`)].join('\n');
+  const { session } = found;
+  session.claudeDiffByPath ||= {};
+  session.claudeDiffByPath[path] = `${session.claudeDiffByPath[path] || ''}${body}\n`;
+  session.realDiff = Object.entries(session.claudeDiffByPath)
+    .map(([p, b]) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n${b}`)
+    .join('');
+  assistant.changes = changesFromDiff(session.realDiff);
+}
+
+function claudeApprovalDetail(request) {
+  const input = request.input || {};
+  if (typeof input.command === 'string') return input.command;
+  if (typeof input.file_path === 'string') return input.file_path;
+  if (typeof input.url === 'string') return input.url;
+  try {
+    return JSON.stringify(input, null, 2).slice(0, 2000);
+  } catch {
+    return '';
+  }
+}
+
+function handleClaudeControlRequest(found, message) {
+  const request = message?.request || {};
+  if (request.subtype !== 'can_use_tool') return;
+  const assistant = ensureClaudeAssistant(found.session);
+  assistant.approval = {
+    requestId: message.request_id,
+    kind: /Edit|Write|Notebook/i.test(request.tool_name || '') ? 'file'
+      : /WebFetch|WebSearch/i.test(request.tool_name || '') ? 'network' : 'command',
+    toolName: request.tool_name || '',
+    input: request.input || {},
+    reason: stripAnsi(request.decision_reason || ''),
+    detail: claudeApprovalDetail(request),
+    suggestions: Array.isArray(request.permission_suggestions) ? request.permission_suggestions : [],
+    suppressAlways: !!request.suppress_always_allow_rule,
+    resolved: false,
+  };
+  updateClaudeView(found, true);
+}
+
+async function respondClaudeApproval(messageId, decision) {
+  const found = ensureSelection();
+  const message = found?.session?.messages?.find((item) => item.id === messageId);
+  if (!message?.approval || message.approval.resolved) return;
+  const approval = message.approval;
+  let result;
+  if (decision === 'accept') {
+    result = { behavior: 'allow', updatedInput: approval.input || {} };
+  } else if (decision === 'acceptForSession') {
+    // 优先采用 CLI 给的 session 目标建议；destination 只用 session，不写用户 settings。
+    const suggestions = (approval.suggestions || []).filter((item) => item?.destination === 'session' && item?.behavior === 'allow');
+    result = {
+      behavior: 'allow',
+      updatedInput: approval.input || {},
+      updatedPermissions: suggestions.length ? suggestions : [{
+        type: 'addRules',
+        rules: [{ toolName: approval.toolName }],
+        behavior: 'allow',
+        destination: 'session',
+      }],
+    };
+  } else {
+    result = { behavior: 'deny', message: '用户拒绝了此操作' };
+  }
+  try {
+    await deps.invoke('claude_respond', {
+      sessionKey: found.session.id,
+      requestId: approval.requestId,
+      result,
+    });
+    approval.resolved = true;
+    approval.decision = decision;
+    updateClaudeView(found, true);
+  } catch (error) {
+    window.UIDialog?.toast?.(`审批响应失败：${error?.message || error}`);
+  }
+}
+
+async function refreshClaudeContext(found) {
+  try {
+    const usage = await claudeControl(found.session.id, 'get_context_usage', {});
+    const total = Number(usage?.totalTokens) || 0;
+    const max = Number(usage?.maxTokens) || 0;
+    let pct = max ? (total / max) * 100 : Number(usage?.percentage) || 0;
+    if (!max && pct > 0 && pct <= 1) pct *= 100;
+    found.session.contextPct = Math.min(100, Math.round(pct));
+    found.session.contextKnown = true;
+    updateClaudeView(found, true);
+  } catch {
+    // 上下文用量拉取失败不影响主流程。
+  }
+}
+
+function handleClaudeMessage(found, message = {}) {
+  const { session } = found;
+  const type = message.type;
+  if (type === 'system') {
+    if (message.subtype === 'init' && message.session_id) {
+      session.claudeSessionId = message.session_id;
+      mockData.claude.currentModel = message.model || mockData.claude.currentModel;
+    }
+    return;
+  }
+  if (type === 'stream_event') {
+    if (message.parent_tool_use_id) return; // 子代理内部流不进主时间线
+    const event = message.event || {};
+    if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+      const assistant = ensureClaudeAssistant(session);
+      if (assistant.needsSeparator && assistant.content) assistant.content += '\n\n';
+      assistant.needsSeparator = false;
+      assistant.content += event.delta.text || '';
+      assistant.pending = false;
+      updateClaudeView(found);
+    }
+    return;
+  }
+  if (type === 'assistant') {
+    if (message.parent_tool_use_id) return;
+    const inner = message.message || {};
+    const assistant = ensureClaudeAssistant(session);
+    const isApiError = inner.model === '<synthetic>' || message.is_api_error_message || inner.is_api_error_message;
+    (inner.content || []).forEach((block) => {
+      if (block?.type === 'tool_use') {
+        assistant.steps ||= [];
+        if (!assistant.steps.some((step) => step.id === block.id)) assistant.steps.push(claudeToolStep(block));
+        registerClaudeChange(found, assistant, block);
+        assistant.needsSeparator = true;
+      } else if (block?.type === 'text' && isApiError && block.text) {
+        assistant.pending = false;
+        assistant.content = assistant.content ? `${assistant.content}\n\n${block.text}` : block.text;
+      }
+    });
+    updateClaudeView(found);
+    return;
+  }
+  if (type === 'user') {
+    const blocks = message.message?.content;
+    if (!Array.isArray(blocks)) return;
+    const assistant = claudeAssistantMessage(session);
+    if (!assistant) return;
+    blocks.forEach((block) => {
+      if (block?.type !== 'tool_result') return;
+      const step = assistant.steps?.find((item) => item.id === block.tool_use_id);
+      if (step && step.status === 'running') step.status = block.is_error ? 'failed' : 'done';
+    });
+    updateClaudeView(found);
+    return;
+  }
+  if (type === 'result') {
+    session.running = false;
+    mockData.claude.running = false;
+    const assistant = claudeAssistantMessage(session);
+    if (assistant) {
+      assistant.pending = false;
+      assistant.needsSeparator = false;
+      if (!assistant.content) {
+        assistant.content = message.is_error
+          ? `Claude Code 错误：${message.result || message.subtype || '任务执行失败'}`
+          : (message.result || '已完成本次任务。');
+      }
+      (assistant.steps || []).forEach((step) => {
+        if (step.status === 'running') step.status = 'done';
+      });
+      if (assistant.approval && !assistant.approval.resolved) assistant.approval.resolved = true;
+    }
+    if (typeof message.total_cost_usd === 'number') {
+      session.costUsd = (Number(session.costUsd) || 0) + message.total_cost_usd;
+    }
+    session.updated = '刚刚';
+    updateClaudeView(found, true);
+    refreshClaudeContext(found);
+  }
+  // 未知类型一律忽略（协议是开放集合）。
+}
+
+function handleClaudeEvent(payload = {}) {
+  const found = findClaudeSessionByKey(payload.sessionKey);
+  if (payload.kind === 'status') {
+    if (payload.status === 'connected') {
+      claudeAliveKeys.add(payload.sessionKey);
+      mockData.claude.connectionStatus = 'connected';
+    } else {
+      claudeAliveKeys.delete(payload.sessionKey);
+      if (found?.session) {
+        if (found.session.running) {
+          const assistant = claudeAssistantMessage(found.session);
+          if (assistant) {
+            assistant.pending = false;
+            assistant.content ||= 'Claude Code 连接已断开，请重新发送任务。';
+          }
+        }
+        found.session.running = false;
+        delete found.session.starting;
+      }
+    }
+    persistMockData();
+    if (activeKind === 'claude') renderAgentWorkspace();
+    return;
+  }
+  if (!found) return;
+  if (payload.kind === 'controlRequest') return handleClaudeControlRequest(found, payload.message);
+  if (payload.kind === 'message') return handleClaudeMessage(found, payload.message);
+}
+
+function applyClaudeInitialize(found, initialize = {}) {
+  const models = Array.isArray(initialize.models) ? initialize.models : [];
+  if (models.length) {
+    claudeModels = models
+      .map((item) => ({
+        value: item?.value || item?.id || '',
+        displayName: item?.displayName || item?.value || item?.id || '',
+        description: item?.description || '',
+        supportsEffort: !!item?.supportsEffort,
+        supportedEffortLevels: Array.isArray(item?.supportedEffortLevels) ? item.supportedEffortLevels : [],
+      }))
+      .filter((item) => item.value);
+    if (mockData.claude.model && !claudeModels.some((item) => item.value === mockData.claude.model)) {
+      mockData.claude.model = '';
+    }
+    if (!mockData.claude.model && claudeModels.some((item) => item.value === 'default')) {
+      mockData.claude.model = 'default';
+    }
+  }
+  // resume 挂着审批的会话时，靠 pending_permission_requests 恢复审批卡。
+  (Array.isArray(initialize.pending_permission_requests) ? initialize.pending_permission_requests : []).forEach((item) => {
+    try {
+      const request = item?.request || item || {};
+      const requestId = item?.request_id || item?.requestId || request?.request_id;
+      if (!requestId || !(request.tool_name || request.subtype === 'can_use_tool')) return;
+      handleClaudeControlRequest(found, {
+        request_id: requestId,
+        request: { subtype: 'can_use_tool', ...request },
+      });
+    } catch {
+      // 结构不符合预期时忽略该条
+    }
+  });
+}
+
+async function ensureClaudeSession(project, session) {
+  if (claudeAliveKeys.has(session.id)) return;
+  if (claudeStartPromises.has(session.id)) return claudeStartPromises.get(session.id);
+  const promise = (async () => {
+    mockData.claude.connectionStatus = 'connecting';
+    session.starting = true;
+    renderRuntimeState();
+    try {
+      const profile = CLAUDE_PERMISSIONS[mockData.claude.permission] || CLAUDE_PERMISSIONS.request;
+      const started = await deps.invoke('claude_start', {
+        sessionKey: session.id,
+        cwd: project.path,
+        resumeId: session.claudeSessionId || null,
+        model: mockData.claude.model || null,
+        effort: mockData.claude.effort || null,
+        permissionMode: profile.mode,
+      });
+      const init = started?.init || {};
+      if (init.session_id) session.claudeSessionId = init.session_id;
+      if (init.model) mockData.claude.currentModel = init.model;
+      claudeAliveKeys.add(session.id);
+      mockData.claude.connectionStatus = 'connected';
+      applyClaudeInitialize({ project, session }, started?.initialize || {});
+    } catch (error) {
+      mockData.claude.connectionStatus = 'error';
+      throw error;
+    } finally {
+      delete session.starting;
+      claudeStartPromises.delete(session.id);
+      persistMockData();
+      if (activeKind === 'claude') renderAgentWorkspace();
+    }
+  })();
+  claudeStartPromises.set(session.id, promise);
+  return promise;
+}
+
+function claudeImageBlock(dataUrl) {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(String(dataUrl || ''));
+  if (!match) return null;
+  return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+}
+
+async function stopClaudeTurn() {
+  const found = ensureSelection();
+  if (!found?.session?.running) return;
+  try {
+    await claudeControl(found.session.id, 'interrupt', { cancel_queued: true });
+  } catch (error) {
+    window.UIDialog?.toast?.(`停止失败：${error?.message || error}`);
+  }
+}
+
+async function sendClaudeMessage() {
+  const input = $('#external-composer-input');
+  const selected = ensureSelection();
+  if (selected?.session?.running) {
+    await stopClaudeTurn();
+    return;
+  }
+  const content = input?.value.trim();
+  if (!content && !composerAttachments.length) return;
+  if (!selected) return;
+  const { project, session } = selected;
+  session.messages ||= [];
+  const attachments = composerAttachments;
+  session.messages.push({ id: uid('eam'), role: 'user', content, attachments, time: nowLabel() });
+  const assistant = { id: uid('eam'), role: 'assistant', content: '', time: nowLabel(), pending: true, steps: [] };
+  session.messages.push(assistant);
+  session.updated = '刚刚';
+  input.value = '';
+  input.style.height = '';
+  composerAttachments = [];
+  mockData.claude.running = true;
+  session.running = true;
+  renderMessages();
+  renderComposerState();
+  renderRuntimeState();
+
+  try {
+    await ensureClaudeSession(project, session);
+    if (!session.title || session.title === '新会话') {
+      session.title = (content || attachments[0]?.name || '新会话').slice(0, 28);
+      claudeControl(session.id, 'rename_session', { title: session.title }).catch(() => {});
+    }
+    const blocks = [
+      ...(content ? [{ type: 'text', text: content }] : []),
+      ...attachments.map((attachment) => claudeImageBlock(attachment.url)).filter(Boolean),
+    ];
+    await deps.invoke('claude_send', {
+      sessionKey: session.id,
+      message: { type: 'user', message: { role: 'user', content: blocks }, parent_tool_use_id: null },
+    });
+    persistMockData();
+    renderAgentWorkspace();
+  } catch (error) {
+    assistant.pending = false;
+    assistant.content = `无法启动 Claude Code：${error?.message || error}`;
+    mockData.claude.running = false;
+    session.running = false;
+    persistMockData();
+    renderAgentWorkspace();
+  }
 }
 
 function sendMockMessage() {
@@ -1767,7 +2334,8 @@ function bind() {
     const decision = event.target.closest('[data-codex-decision]');
     if (decision) {
       const approval = decision.closest('[data-approval-message]');
-      respondCodexApproval(approval?.dataset.approvalMessage, decision.dataset.codexDecision);
+      if (activeKind === 'claude') respondClaudeApproval(approval?.dataset.approvalMessage, decision.dataset.codexDecision);
+      else respondCodexApproval(approval?.dataset.approvalMessage, decision.dataset.codexDecision);
       return;
     }
     const starter = event.target.closest('[data-external-starter]');
@@ -1816,7 +2384,15 @@ function bind() {
     }
     const permission = event.target.closest('[data-external-permission]');
     if (permission) {
-      mockData.codex.permission = permission.dataset.externalPermission;
+      currentAgentState().permission = permission.dataset.externalPermission;
+      if (activeKind === 'claude') {
+        const session = findSession()?.session;
+        const profile = CLAUDE_PERMISSIONS[mockData.claude.permission] || CLAUDE_PERMISSIONS.request;
+        if (session && claudeAliveKeys.has(session.id)) {
+          claudeControl(session.id, 'set_permission_mode', { mode: profile.mode })
+            .catch((error) => window.UIDialog?.toast?.(`切换权限失败：${error?.message || error}`));
+        }
+      }
       persistMockData();
       closeExternalPopovers();
       renderComposerState();
@@ -1824,16 +2400,26 @@ function bind() {
     }
     const model = event.target.closest('[data-external-model]');
     if (model) {
-      mockData.codex.model = model.dataset.externalModel;
-      const selected = selectedCodexModel();
-      if (!supportedEfforts(selected).includes(mockData.codex.effort)) mockData.codex.effort = selected?.defaultReasoningEffort || '';
+      if (activeKind === 'claude') {
+        mockData.claude.model = model.dataset.externalModel;
+        const session = findSession()?.session;
+        if (session && claudeAliveKeys.has(session.id)) {
+          claudeControl(session.id, 'set_model', { model: mockData.claude.model })
+            .catch((error) => window.UIDialog?.toast?.(`切换模型失败：${error?.message || error}`));
+        }
+      } else {
+        mockData.codex.model = model.dataset.externalModel;
+        const selected = selectedCodexModel();
+        if (!supportedEfforts(selected).includes(mockData.codex.effort)) mockData.codex.effort = selected?.defaultReasoningEffort || '';
+      }
       persistMockData();
       renderComposerState();
       return;
     }
     const effort = event.target.closest('[data-external-effort]');
     if (effort) {
-      mockData.codex.effort = effort.dataset.externalEffort;
+      // claude 的推理档在下一次进程启动时经 --effort 生效（运行中切换见 M3 实测清单）。
+      currentAgentState().effort = effort.dataset.externalEffort;
       persistMockData();
       renderComposerState();
       return;
@@ -1861,6 +2447,11 @@ export function initExternalAgentMode(options) {
       .then((unlisten) => { codexUnlisten = unlisten; })
       .catch((error) => console.warn('listen codex app-server', error));
   }
+  if (eventApi?.listen && !claudeUnlisten) {
+    eventApi.listen('claude-agent', (event) => handleClaudeEvent(event?.payload || {}))
+      .then((unlisten) => { claudeUnlisten = unlisten; })
+      .catch((error) => console.warn('listen claude agent', error));
+  }
   if (eventApi?.listen && !powerShellUnlisten) {
     eventApi.listen('powershell-terminal', (event) => handlePowerShellEvent(event?.payload || {}))
       .then((unlisten) => { powerShellUnlisten = unlisten; })
@@ -1869,6 +2460,17 @@ export function initExternalAgentMode(options) {
   deps.invoke('codex_status').then((status) => {
     mockData.codex.connectionStatus = status?.connected ? 'connected' : 'disconnected';
     if (!status?.connected) clearCodexRuntime(false);
+    persistMockData();
+  }).catch(() => {});
+  deps.invoke('claude_status').then((status) => {
+    const alive = new Set(status?.sessions || []);
+    claudeAliveKeys.clear();
+    alive.forEach((key) => claudeAliveKeys.add(key));
+    mockData.claude.projects.flatMap((project) => project.sessions).forEach((session) => {
+      delete session.starting;
+      if (!alive.has(session.id)) session.running = false;
+    });
+    mockData.claude.running = mockData.claude.projects.some((project) => project.sessions.some((session) => session.running));
     persistMockData();
   }).catch(() => {});
   window.ExternalAgentMode = {

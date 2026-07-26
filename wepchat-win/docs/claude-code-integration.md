@@ -1,7 +1,7 @@
 # Claude Code 接入实施方案
 
-状态：**方案，未实施** · 更新时间：2026-07-26
-实施后本文并入 / 对齐 `docs/external-agent-integration.md` 的口径（那份只记已落地的事实）。
+状态：**已实施（2026-07-26，M1–M4 主体落地）** · 更新时间：2026-07-26
+已落地事实以 `docs/external-agent-integration.md` §11 为准；本文保留协议依据、映射表与实测清单。
 
 ## 0. 为什么找不到「Claude 版的 app-server 文档」
 
@@ -93,7 +93,8 @@ claude --print --verbose \
 以下样例为本机抓包精简（省略部分字段）：
 
 ```jsonc
-// ① 握手：进程起来后第一条
+// ① 握手：随会话首轮启动发出（实测 2.1.220：进程启动后并不立即发送，
+//    要等首条用户消息进来、会话真正创建时才出现；宿主不得阻塞等待它）
 {"type":"system","subtype":"init","cwd":"...","session_id":"0dc04121-...",
  "tools":["Bash","Edit","Read", ...],"model":"claude-opus-4-7","permissionMode":"default",
  "claude_code_version":"2.1.220","capabilities":["interrupt_receipt_v1", ...],
@@ -163,8 +164,9 @@ UI 映射：`tool_use` 块 → 工具步骤卡（名称映射：`Bash`→运行�
 {"type":"control_cancel_request","request_id":"wc-6"}
 ```
 
-**initialize 握手**：进程起来、收到 `system/init` 后，宿主发一次
-`{"subtype":"initialize"}`（空参即可，SDK 同款行为）。响应即含
+**initialize 握手**：进程一起来宿主就发
+`{"subtype":"initialize"}`（空参即可；实测 2.1.220 启动即应答，**不要**先等 `system/init`——
+它要到首条用户消息之后才出现）。响应即含
 `commands`、`models: ModelInfo[]`、`account`，以及 **`pending_permission_requests`**
 （resume 一个还挂着审批的会话时，靠它恢复审批卡）。模型菜单直接吃这里的 `models`，
 无需单独 `list_models`（后者留作刷新）。
@@ -276,3 +278,31 @@ ClaudeConnection { child, stdin, alive, pending: HashMap<String /*request_id*/, 
 - [ ] `set_max_thinking_tokens` 与启动 `--effort` 的相互作用
 - [ ] `--resume` + 未决审批 → `pending_permission_requests` 行为
 - [ ] 长任务下 stream_event 吞吐与 UI 渲染节流（复用聊天模式 40ms 合并即可）
+
+## 11. 实施记录（2026-07-26）
+
+代码落点：
+
+- Rust：新增 `src-tauri/src/claude_agent.rs`（会话进程池，§8 设计原样落地）。
+  命令 `claude_start / claude_send / claude_control / claude_respond / claude_stop / claude_stop_all / claude_status`；
+  事件 `claude-agent`，载荷 `{ sessionKey, kind: message|controlRequest|status|diagnostic, … }`；
+  control 白名单同 §8；空闲回收 10 分钟（无运行轮次且无消息即 kill，下次发送 `--resume` 恢复）；
+  窗口关闭时 `ClaudeAgent::shutdown_all()`（`lib.rs`）。`claude_start` 内部完成
+  initialize 握手并返回 `{initialize}`（含 `models`）；`session_id` 由首轮消息里的
+  `system/init` 经事件流捕获（见 §5 实测修正），`bypassPermissions`
+  档同时传 `--dangerously-skip-permissions`。
+- 前端：`ui/js/external-agent-mode.js` 增加 claude 分支，渲染层零新增（§9 口径）。
+  消息聚合、审批三按钮（`suppress_always_allow_rule` 时隐藏「本会话允许」）、
+  权限三档、模型/推理档菜单（吃 initialize 的 `models`）、上下文环
+  （每次 `result` 后 `get_context_usage`）、停止（`interrupt` + `cancel_queued`）、
+  重命名（`rename_session`）、图片附件（base64 image block）、流式 40ms 合并渲染。
+
+与方案的偏差 / 留待后续：
+
+- 推理档运行中切换未做：effort 只在下一次进程启动时经 `--effort` 生效
+  （`set_max_thinking_tokens` 与 `--effort` 的关系仍在实测清单里）。
+- 变更审阅走 M1 口径：从 `Edit/Write/MultiEdit/NotebookEdit` 的 `tool_use.input`
+  合成 diff（按文件聚合）；`get_workspace_diff` 已在白名单但未接 UI。
+- `thinking_delta` 未渲染（折叠思考区留作增强）；`list_models` 刷新未接（initialize 已带全量）。
+- 成本展示：`result.total_cost_usd` 按会话累计，显示在上下文环的 title 里；`get_session_cost` 未接。
+- 实测清单五项在真机验证后回填勾选。

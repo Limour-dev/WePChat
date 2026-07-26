@@ -1,15 +1,15 @@
 # External Agent 接入经验
 
-更新时间：2026-07-25
+更新时间：2026-07-26
 
-本文记录 WePChat Windows 当前已落地的 External Agent 接入方式。它是后续维护 Codex 集成时的唯一工程说明，不记录已废弃的 ACP、`codex exec --json`、演示终端或 mock 方案。
+本文记录 WePChat Windows 当前已落地的 External Agent 接入方式。它是后续维护 Codex / Claude Code 集成时的唯一工程说明，不记录已废弃的 ACP、`codex exec --json`、演示终端或 mock 方案。
 
 ## 1. 当前范围
 
-- Codex 是唯一真实接入的外部 Agent；Pi 与 Claude Code 保留为 UI 占位，不得伪装为已连接。
-- 连接协议是 Codex CLI 的 `app-server --stdio` JSON-RPC JSONL。
-- 进程按首次实际发送任务启动；切换到 External Agent 页面、查看文件树或打开终端都不得隐式启动 Codex。
-- 每个项目下可有多个 Codex thread；文件、终端与打开位置均以当前项目目录为范围。
+- Codex 与 Claude Code 是真实接入的外部 Agent（Claude Code 见 §11）；Pi 保留为 UI 占位，不得伪装为已连接。
+- Codex 连接协议是 CLI 的 `app-server --stdio` JSON-RPC JSONL；Claude Code 是 `--print` 模式的 stream-json JSONL 双向流 + control 通道。
+- 进程按首次实际发送任务启动；切换到 External Agent 页面、查看文件树或打开终端都不得隐式启动任何 Agent。
+- 每个项目下可有多个会话；文件、终端与打开位置均以当前项目目录为范围。
 
 ## 2. 分层
 
@@ -19,13 +19,14 @@ WebView
     -> Tauri invoke / event
 Rust
   external_agent.rs     Codex app-server 生命周期与 JSONL RPC
+  claude_agent.rs       Claude Code 会话进程池与 stream-json 流
   external_project.rs   只读项目文件树与文件内容
   external_terminal.rs  Windows ConPTY + 真 PowerShell
   external_open.rs      当前项目的受限外部打开方式
-    -> Codex CLI / Windows process
+    -> Codex CLI / Claude CLI / Windows process
 ```
 
-`src-tauri/src/lib.rs` 必须同时注册上述命令，并在窗口关闭时调用 `CodexAppServer::shutdown()` 与 `PowerShellTerminal::shutdown()`，避免遗留子进程。
+`src-tauri/src/lib.rs` 必须同时注册上述命令，并在窗口关闭时调用 `CodexAppServer::shutdown()`、`ClaudeAgent::shutdown_all()` 与 `PowerShellTerminal::shutdown()`，避免遗留子进程。
 
 ## 3. Codex app-server
 
@@ -140,3 +141,37 @@ account/read
 6. PowerShell 是否是持续的真实会话：命令、`cd`、Ctrl+C、ANSI 颜色和窗口 resize 都要可用。
 7. 模型、推理强度、权限和图片输入是否实际进入下一次 `turn/start` 参数。
 8. 打开位置只打开当前项目，缺失的程序不显示。
+9. Claude Code：首次发送完成 system/init + initialize 握手；`can_use_tool` 三按钮、
+   停止（interrupt）、`--resume` 恢复、空闲回收后再发送可透明续接。
+
+## 11. Claude Code stream-json
+
+协议依据与完整映射表在 `docs/claude-code-integration.md`，这里只记已落地口径。
+
+- **进程模型**：一个进程 = 一个会话（与 codex 的单 app-server 不同）。Rust 侧
+  `claude_agent.rs` 维护 `sessionKey → 子进程` 池；sessionKey 是 WePChat 会话 id，
+  claude 自己的 `session_id`（取自 `system/init`）存在会话数据里，重启进程时用
+  `--resume <sessionId>` 恢复上下文。
+- **启动**：`claude --print --verbose --input-format stream-json --output-format stream-json
+  --include-partial-messages --permission-mode <mode>`，工作目录 = 项目目录；
+  Windows 上从 npm shim 定位 `@anthropic-ai/claude-code` 自带的原生 `claude.exe`，
+  兜底 `cmd.exe /D /S /C call`。握手在 Rust 内完成：启动后直接发 `initialize` control
+  请求（实测启动即应答），`claude_start` 返回 `{initialize}`；`system/init` 要等首条
+  用户消息后才出现，`session_id` 由事件流捕获，不得阻塞等待。
+- **命令与事件**：`claude_start / claude_send / claude_control（白名单）/ claude_respond /
+  claude_stop / claude_stop_all / claude_status`；事件 `claude-agent`，
+  载荷 `{ sessionKey, kind: message|controlRequest|status|diagnostic }`，未知消息类型前端一律忽略。
+- **权限三档**：请求批准 `default` · 替我批准 `acceptEdits` · 完全访问权限
+  `bypassPermissions` + `--dangerously-skip-permissions`；运行中切换用 `set_permission_mode`。
+  逐操作审批：`can_use_tool` → `claude_respond` 回 `PermissionResult`；
+  「本会话允许」优先采用 CLI 的 session 目标 `permission_suggestions`，
+  `destination` 只用 `session`；`suppress_always_allow_rule` 时不提供该按钮。
+- **模型与推理档**：模型菜单吃 initialize 响应的 `models`（`ModelInfo`），运行中 `set_model`；
+  effort 目前只在下一次进程启动经 `--effort` 生效。
+- **上下文与成本**：每次 `result` 后 `get_context_usage` 拉取百分比；
+  `result.total_cost_usd` 按会话累计，显示在上下文环 title。
+- **变更审阅**：M1 口径，从 `Edit/Write/MultiEdit/NotebookEdit` 的 `tool_use.input`
+  合成 diff（按文件聚合）喂现有审阅 UI；`get_workspace_diff` 未接。
+- **生命周期**：空闲 10 分钟（无运行轮次且无消息）自动回收进程，之后发送任务时
+  `--resume` 透明恢复；窗口关闭 shutdown 全部子进程；会话删除只移除 WePChat 索引，
+  不删 `~/.claude/projects/` 下的转录文件。

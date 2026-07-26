@@ -147,7 +147,7 @@ fn where_command(command: &str) -> Result<Option<String>, String> {
     Ok(lines.first().map(|line| (*line).to_string()))
 }
 
-fn resolve_command_path(path_or_command: &str) -> Result<Option<String>, String> {
+pub(crate) fn resolve_command_path(path_or_command: &str) -> Result<Option<String>, String> {
     let value = path_or_command.trim();
     if value.is_empty() {
         return Ok(None);
@@ -226,7 +226,7 @@ fn codex_launch_config(app: &AppHandle) -> Result<AgentLaunchConfig, String> {
     })
 }
 
-fn quote_cmd_arg(value: &str) -> String {
+pub(crate) fn quote_cmd_arg(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 

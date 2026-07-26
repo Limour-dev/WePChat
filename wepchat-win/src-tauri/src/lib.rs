@@ -1,3 +1,4 @@
+mod claude_agent;
 mod db;
 mod external_agent;
 mod external_open;
@@ -9,6 +10,10 @@ mod sessions;
 mod settings;
 mod workspace_fs;
 
+use claude_agent::{
+    claude_control, claude_respond, claude_send, claude_start, claude_status, claude_stop,
+    claude_stop_all, ClaudeAgent,
+};
 use external_agent::{
     codex_disconnect, codex_request, codex_respond, codex_status, external_agent_detect,
     external_agent_detect_all, external_agent_supported, CodexAppServer,
@@ -118,6 +123,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(http_client::new_abort_registry() as AbortRegistry)
         .manage(CodexAppServer::default())
+        .manage(ClaudeAgent::default())
         .manage(PowerShellTerminal::default())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -134,6 +140,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 window.state::<CodexAppServer>().shutdown();
+                window.state::<ClaudeAgent>().shutdown_all();
                 window.state::<PowerShellTerminal>().shutdown();
                 let _ = db::checkpoint_truncate();
             }
@@ -179,6 +186,13 @@ pub fn run() {
             codex_respond,
             codex_status,
             codex_disconnect,
+            claude_start,
+            claude_send,
+            claude_control,
+            claude_respond,
+            claude_stop,
+            claude_stop_all,
+            claude_status,
             powershell_terminal_open,
             powershell_terminal_write,
             powershell_terminal_resize,
