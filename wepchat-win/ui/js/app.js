@@ -29,11 +29,13 @@ import {
   getMessageElement,
 } from './chat-view.js';
 import * as ChatScroll from './chat-scroll.js';
-import { initChatRail, updateChatRail } from './chat-rail.js';
+import { createChatRail } from './chat-rail.js';
 import { initExternalAgentMode } from './external-agent-mode.js';
 
 const LAST_SESSION_KEY = 'wepchat:last-active-session';
 const MESSAGE_PAGE_LIMIT = 50;
+
+let chatRail = null;
 
 function rememberedSessionId() {
   try { return localStorage.getItem(LAST_SESSION_KEY) || ''; }
@@ -1573,7 +1575,16 @@ function renderSessions() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'session-item-btn';
-    button.textContent = (session.pinned ? '📌 ' : '') + sessionTitle(session);
+    if (session.pinned) {
+      button.insertAdjacentHTML(
+        'beforeend',
+        '<svg class="session-pin" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>'
+      );
+    }
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'session-item-title';
+    titleSpan.textContent = sessionTitle(session);
+    button.appendChild(titleSpan);
     button.title = session.workspacePath
       ? `${sessionTitle(session)}\n${session.workspacePath}`
       : sessionTitle(session);
@@ -2141,7 +2152,7 @@ function ensureChatView() {
         if (reason === 'session') ChatScroll.resetToBottom();
         else ChatScroll.notifyContentChanged();
         if (reason === 'stream') renderTokenMeter();
-        updateChatRail(state.session);
+        chatRail?.update(state.session?.messages);
       },
     },
   });
@@ -2150,9 +2161,9 @@ function ensureChatView() {
     jumpButton: $('#btn-jump-bottom'),
     onNearTop: loadOlderActiveMessages,
   });
-  initChatRail({
+  chatRail = createChatRail({
     root: $('#chat-rail'),
-    chatHost: host,
+    scrollHost: host,
     getMessageElement,
     onJump: (el) => ChatScroll.scrollToMessage(el),
   });

@@ -16,7 +16,8 @@ use external_agent::{
 use external_project::{external_project_list, external_project_read};
 use external_open::{external_project_open, external_project_open_targets};
 use external_terminal::{
-    powershell_terminal_open, powershell_terminal_resize, powershell_terminal_write,
+    powershell_terminal_close, powershell_terminal_open, powershell_terminal_resize,
+    powershell_terminal_write,
     PowerShellTerminal,
 };
 use http_client::{http_request, http_stream, http_stream_abort, AbortRegistry};
@@ -181,6 +182,7 @@ pub fn run() {
             powershell_terminal_open,
             powershell_terminal_write,
             powershell_terminal_resize,
+            powershell_terminal_close,
             external_project_list,
             external_project_read,
             external_project_open_targets,

@@ -142,6 +142,15 @@
       : [];
   }
 
+  const TOOL_ICONS = {
+    select: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M3 5h2V3c-1.1 0-2 .9-2 2zm0 8h2v-2H3v2zm4 8h2v-2H7v2zM3 9h2V7H3v2zm10-6h-2v2h2V3zm6 0v2h2c0-1.1-.9-2-2-2zM5 21v-2H3c0 1.1.9 2 2 2zm-2-4h2v-2H3v2zM9 3H7v2h2V3zm2 18h2v-2h-2v2zm8-8h2v-2h-2v2zm0 8c1.1 0 2-.9 2-2h-2v2zm0-12h2V7h-2v2zm0 8h2v-2h-2v2zm-4 4h2v-2h-2v2zm0-16h2V3h-2v2z"/></svg>',
+    hand: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M23 5.5V20c0 2.2-1.8 4-4 4h-7.3c-1.08 0-2.1-.43-2.85-1.19L1 14.83s1.26-1.23 1.3-1.25c.22-.19.49-.29.79-.29.22 0 .42.06.6.16.04.01 4.31 2.46 4.31 2.46V4c0-.83.67-1.5 1.5-1.5S11 3.17 11 4v7h1V1.5c0-.83.67-1.5 1.5-1.5S15 .67 15 1.5V11h1V2.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5V11h1V5.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5z"/></svg>',
+    zoomOut: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M19 13H5v-2h14v2z"/></svg>',
+    zoomIn: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',
+    reset: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M5 15H3v4c0 1.1.9 2 2 2h4v-2H5v-4zM5 5h4V3H5c-1.1 0-2 .9-2 2v4h2V5zm14-2h-4v2h4v4h2V5c0-1.1-.9-2-2-2zm0 16h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zM12 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>',
+    upload: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>',
+  };
+
   function render(host, state, handlers) {
     handlers = handlers || {};
     if (!host) return;
@@ -175,7 +184,9 @@
                   <button type="button" class="${handlers.referenceMode === 'edit' ? 'is-active' : ''}" data-edit-mode="edit">编辑</button>
                 </div>
                 <textarea rows="1" placeholder="输入即见所想…"></textarea>
-                <button type="submit" class="img-canvas-edit-send" title="对话编辑" aria-label="对话编辑">↑</button>
+                <button type="submit" class="img-canvas-edit-send" title="对话编辑" aria-label="对话编辑">
+                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg>
+                </button>
               </form>
             ` : ''}
           `).join('')}
@@ -186,17 +197,17 @@
       </div>
       <div class="img-canvas-chrome">
         <div class="img-canvas-mode">
-          <button type="button" class="img-canvas-btn img-canvas-icon-btn${state.tool === 'select' ? ' is-active' : ''}" data-act="tool-select" title="选择">↖</button>
-          <button type="button" class="img-canvas-btn img-canvas-icon-btn${state.tool === 'hand' ? ' is-active' : ''}" data-act="tool-hand" title="抓手工具">✋</button>
+          <button type="button" class="img-canvas-btn img-canvas-icon-btn${state.tool === 'select' ? ' is-active' : ''}" data-act="tool-select" title="框选">${TOOL_ICONS.select}</button>
+          <button type="button" class="img-canvas-btn img-canvas-icon-btn${state.tool === 'hand' ? ' is-active' : ''}" data-act="tool-hand" title="抓手">${TOOL_ICONS.hand}</button>
         </div>
         <div class="img-canvas-zoom">
-          <button type="button" class="img-canvas-btn" data-act="zoom-out" title="缩小">−</button>
+          <button type="button" class="img-canvas-btn img-canvas-icon-btn" data-act="zoom-out" title="缩小">${TOOL_ICONS.zoomOut}</button>
           <span class="img-canvas-zoom-label">${zoomPct}%</span>
-          <button type="button" class="img-canvas-btn" data-act="zoom-in" title="放大">+</button>
-          <button type="button" class="img-canvas-btn" data-act="zoom-reset" title="重置视图">重置</button>
+          <button type="button" class="img-canvas-btn img-canvas-icon-btn" data-act="zoom-in" title="放大">${TOOL_ICONS.zoomIn}</button>
+          <button type="button" class="img-canvas-btn img-canvas-icon-btn" data-act="zoom-reset" title="重置视图">${TOOL_ICONS.reset}</button>
         </div>
         <div class="img-canvas-tools">
-          <button type="button" class="img-canvas-btn" data-act="upload" title="上传图片到画布">上传</button>
+          <button type="button" class="img-canvas-btn" data-act="upload" title="上传图片到画布">${TOOL_ICONS.upload}上传</button>
           <button type="button" class="img-canvas-btn${selected(state)?.path ? ' is-active' : ''}" data-act="use-ref" title="用作参考" ${selected(state)?.path ? '' : 'disabled'}>参考</button>
           <button type="button" class="img-canvas-btn" data-act="clear-sel" title="取消选中" ${state.selectedId ? '' : 'disabled'}>取消选中</button>
         </div>

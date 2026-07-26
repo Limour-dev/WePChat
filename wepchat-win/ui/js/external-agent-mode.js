@@ -1,4 +1,5 @@
 import { $, $all, cloneJson, defaultSettings, uid } from './app-core.js';
+import { createChatRail } from './chat-rail.js';
 
 const MOCK_STORAGE_KEY = 'wepchat:external-agent-ui-mock:v1';
 
@@ -65,7 +66,8 @@ const ICONS = {
 let deps = null;
 let detection = [];
 let activeKind = 'codex';
-let activeWorkspaceTab = 'terminal';
+let workspaceTabs = [];
+let activeWorkspaceTab = '';
 let mockData = loadMockData();
 let responseTimer = 0;
 let codexModels = [];
@@ -109,6 +111,8 @@ function mountXterm(project) {
   if (!host || !window.Terminal || !window.FitAddon?.FitAddon) return;
   if (xtermSession?.terminalId === project.path && xtermSession.host === host) return;
   disposeXterm();
+  const rootStyle = getComputedStyle(document.documentElement);
+  const cssColor = (name, fallback) => (rootStyle.getPropertyValue(name) || '').trim() || fallback;
   const terminal = new window.Terminal({
     cursorBlink: true,
     convertEol: true,
@@ -116,7 +120,11 @@ function mountXterm(project) {
     fontSize: 12,
     lineHeight: 1.25,
     scrollback: 5000,
-    theme: { background: '#101114', foreground: '#e5e7eb', cursor: '#e5e7eb' },
+    theme: {
+      background: cssColor('--code-bg', '#101114'),
+      foreground: cssColor('--text', '#e5e7eb'),
+      cursor: cssColor('--text', '#e5e7eb'),
+    },
   });
   const fitAddon = new window.FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
@@ -220,7 +228,8 @@ function renderMessageCopy(message) {
       ? window.MD.renderStreaming(message.content || '')
       : window.MD.render(message.content || '');
   }
-  return escapeHtml(message.content || '').replace(/\n/g, '<br>');
+  // 用户气泡 .chat-message-body 自带 pre-wrap，换行无需 <br>
+  return escapeHtml(message.content || '');
 }
 
 function renderMessageAttachments(message) {
@@ -671,10 +680,13 @@ function renderModelMenu() {
 }
 
 function openTargetIcon(target) {
-  if (target === 'vscode') return '&#9670;';
-  if (target === 'visual-studio') return '&#9670;';
-  if (target === 'git-bash') return '&#9670;';
-  return '&#128193;';
+  if (target === 'vscode' || target === 'visual-studio') {
+    return '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>';
+  }
+  if (target === 'git-bash') {
+    return '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M5 7.4 6.4 6l6 6-6 6L5 16.6 9.6 12 5 7.4zM13 18h6v-2h-6v2z"/></svg>';
+  }
+  return '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M10 4l2 2h8c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2h6z"/></svg>';
 }
 
 function renderOpenMenu() {
@@ -683,7 +695,7 @@ function renderOpenMenu() {
   const targets = projectOpenTargets || [];
   menu.innerHTML = targets.map((target) => `
     <button type="button" class="external-menu-option external-open-option" data-external-open-target="${escapeHtml(target.id)}" role="menuitem">
-      <b aria-hidden="true">${openTargetIcon(target.id)}</b><strong>${escapeHtml(target.label)}</strong>
+      ${openTargetIcon(target.id)}<strong>${escapeHtml(target.label)}</strong>
     </button>`).join('');
 }
 
@@ -700,13 +712,28 @@ async function showOpenProjectMenu() {
   toggleExternalPopover('external-open-menu', 'external-open-project');
 }
 
+let externalRail = null;
+
+function ensureExternalRail() {
+  if (externalRail) return externalRail;
+  const root = $('#external-chat-rail');
+  const host = $('#external-chat-scroll');
+  if (!root || !host) return null;
+  externalRail = createChatRail({
+    root,
+    scrollHost: host,
+    getMessageElement: (id) => host.querySelector(`[data-external-message-id="${CSS.escape(id)}"]`),
+  });
+  return externalRail;
+}
+
 function renderMessages() {
   const host = $('#external-chat-scroll');
   const found = ensureSelection();
   if (!host || !found) return;
   const { session } = found;
   if (!session.messages?.length) {
-    $('#external-chat-rail')?.setAttribute('hidden', '');
+    ensureExternalRail()?.update([]);
     host.innerHTML = `
       <div class="external-chat-empty">
         <span class="external-chat-empty-brand">${icon(activeKind)}</span>
@@ -721,12 +748,26 @@ function renderMessages() {
     return;
   }
 
-  host.innerHTML = `<div class="external-message-stack">${session.messages.map((message) => {
-    const steps = (message.steps || []).map((step) => `
+  host.innerHTML = `<div class="chat-inner external-message-stack">${session.messages.map((message) => {
+    if (message.role === 'user') {
+      return `
+      <article class="chat-message chat-message--user external-message" data-external-message-id="${escapeHtml(message.id)}">
+        ${renderMessageAttachments(message)}
+        <div class="chat-message-body">${renderMessageCopy(message)}</div>
+      </article>`;
+    }
+    const steps = (message.steps || []).map((step) => {
+      const state = step.status === 'done'
+        ? '<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>'
+        : step.status === 'failed'
+          ? '<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><path fill="currentColor" d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg>'
+          : '<span class="mini-spinner" aria-hidden="true"></span>';
+      return `
       <div class="external-tool-step">
-        <span class="external-tool-state ${step.status === 'done' ? 'is-done' : step.status === 'failed' ? 'is-failed' : ''}">${step.status === 'done' ? '&#10003;' : step.status === 'failed' ? '!' : '&#8230;'}</span>
+        <span class="external-tool-state ${step.status === 'done' ? 'is-done' : step.status === 'failed' ? 'is-failed' : ''}">${state}</span>
         <span><strong>${escapeHtml(step.title)}</strong><small>${escapeHtml(step.detail)}</small></span>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     const approval = message.approval && !message.approval.resolved ? `
       <section class="external-approval" data-approval-message="${escapeHtml(message.id)}">
         <div class="external-approval-head"><strong>${message.approval.kind === 'file' ? 'Codex 请求修改文件' : message.approval.kind === 'network' ? 'Codex 请求访问网络' : 'Codex 请求运行命令'}</strong><small>${escapeHtml(message.approval.reason || '需要你的确认后才能继续')}</small></div>
@@ -742,57 +783,26 @@ function renderMessages() {
         <span><strong>${message.changes.length} 个文件有变更</strong><small>打开审阅查看 diff</small></span>
         <span class="external-change-counts">+${message.changes.reduce((sum, item) => sum + (Number(item.added) || 0), 0)} <i>-${message.changes.reduce((sum, item) => sum + (Number(item.removed) || 0), 0)}</i></span>
       </button>` : '';
+    const pending = message.pending && !message.content
+      ? '<div class="external-pending"><span class="typing-dot" aria-hidden="true"></span></div>'
+      : '';
+    const body = message.content
+      ? `<div class="chat-message-body md">${renderMessageCopy(message)}</div>`
+      : '';
     return `
-      <article class="external-message external-message--${message.role}" data-external-message-id="${escapeHtml(message.id)}">
-        ${message.role === 'assistant' ? `<div class="external-message-avatar">${icon(activeKind)}</div>` : ''}
-        <div class="external-message-content">
-          <div class="external-message-copy">${renderMessageCopy(message)}</div>
-          ${renderMessageAttachments(message)}
-          ${steps ? `<div class="external-tool-list">${steps}</div>` : ''}
-          ${approval}
-          ${changes}
-          <time>${escapeHtml(message.time || '')}</time>
-        </div>
+      <article class="chat-message chat-message--assistant external-message" data-external-message-id="${escapeHtml(message.id)}">
+        ${steps ? `<div class="external-tool-list">${steps}</div>` : ''}
+        ${pending}
+        ${body}
+        ${approval}
+        ${changes}
       </article>`;
   }).join('')}</div>`;
   prepareExternalLinks(host);
   requestAnimationFrame(() => {
     host.scrollTop = host.scrollHeight;
-    renderExternalChatRail(session);
+    ensureExternalRail()?.update(session.messages);
   });
-}
-
-function renderExternalChatRail(session) {
-  const root = $('#external-chat-rail');
-  const track = $('#external-chat-rail-track');
-  const host = $('#external-chat-scroll');
-  if (!root || !track || !host) return;
-  const users = (session?.messages || []).filter((message) => message.role === 'user');
-  root.hidden = users.length < 2;
-  if (root.hidden) return;
-  track.innerHTML = users.map((message) => `
-    <button type="button" class="chat-rail-tick" data-external-rail-message="${escapeHtml(message.id)}" aria-label="${escapeHtml(String(message.content || '定位消息').split(/\r?\n/)[0].slice(0, 72))}"></button>`).join('');
-  track.querySelectorAll('[data-external-rail-message]').forEach((button) => {
-    button.addEventListener('click', () => {
-      host.querySelector(`[data-external-message-id="${CSS.escape(button.dataset.externalRailMessage)}"]`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-  });
-  syncExternalChatRail();
-}
-
-function syncExternalChatRail() {
-  const host = $('#external-chat-scroll');
-  const root = $('#external-chat-rail');
-  if (!host || !root || root.hidden) return;
-  const probe = host.getBoundingClientRect().top + host.clientHeight / 3;
-  let active = null;
-  const buttons = [...root.querySelectorAll('[data-external-rail-message]')];
-  buttons.forEach((button) => {
-    const message = host.querySelector(`[data-external-message-id="${CSS.escape(button.dataset.externalRailMessage)}"]`);
-    if (message?.getBoundingClientRect().top <= probe) active = button;
-  });
-  buttons.forEach((button) => button.classList.toggle('is-active', button === active));
 }
 
 function renderComposerState() {
@@ -801,9 +811,11 @@ function renderComposerState() {
   if (!send || !input) return;
   const running = activeKind === 'codex' ? !!findSession()?.session?.running : !!currentAgentState().running;
   const hasSession = !!findSession();
+  const hasDraft = !!input.value.trim() || !!composerAttachments.length;
   input.disabled = !hasSession;
-  send.disabled = !hasSession || (!running && !input.value.trim() && !composerAttachments.length);
+  send.disabled = !hasSession || (!running && !hasDraft);
   send.classList.toggle('is-stop', running);
+  send.classList.toggle('is-ready', running || (hasSession && hasDraft));
   send.title = running ? '停止' : '发送';
   send.setAttribute('aria-label', running ? '停止' : '发送');
   send.innerHTML = running
@@ -844,6 +856,7 @@ function renderAgentWorkspace() {
 
   if (!found) {
     if ($('#external-main-session-title')) $('#external-main-session-title').textContent = '尚未添加项目';
+    ensureExternalRail()?.update([]);
     const chat = $('#external-chat-scroll');
     if (chat) {
       chat.innerHTML = `
@@ -859,7 +872,7 @@ function renderAgentWorkspace() {
     renderRightWorkspace();
     return;
   }
-  const { project, session } = found;
+  const { session } = found;
 
   if ($('#external-main-session-title')) $('#external-main-session-title').textContent = session.title;
   const context = Math.max(0, Math.min(100, Number(agentState.context) || 0));
@@ -870,15 +883,6 @@ function renderAgentWorkspace() {
   renderMessages();
   renderComposerState();
   renderRightWorkspace();
-}
-
-function mockFiles(project) {
-  return [
-    { path: 'ui/js/external-agent-mode.js', status: 'M', content: `// ${agentMeta().label} workspace\nexport function initExternalAgentMode() {\n  // UI mock: RPC adapter will be connected later.\n}\n` },
-    { path: 'ui/css/app.css', status: 'M', content: '.external-agent-view {\n  display: flex;\n  min-width: 0;\n}\n' },
-    { path: 'docs/external-agent-integration.md', status: '', content: `# ${project.name}\n\nExternal Agent 接入经验。\n` },
-    { path: 'package.json', status: '', content: '{\n  "name": "wepchat",\n  "private": true\n}\n' },
-  ];
 }
 
 function mockReviews() {
@@ -909,10 +913,6 @@ function mockReviews() {
 function projectChildPath(root, name) {
   const separator = root.includes('\\') ? '\\' : '/';
   return `${root.replace(/[\\/]+$/, '')}${separator}${name}`;
-}
-
-function isAbsolutePath(path) {
-  return /^(?:[A-Za-z]:[\\/]|\\\\)/.test(String(path || ''));
 }
 
 function projectRelativePath(root, path) {
@@ -1026,6 +1026,83 @@ function renderProjectFileTree(project, state, directory, depth, changedPaths, s
   }).join('');
 }
 
+const WORKSPACE_TAB_KINDS = [
+  {
+    kind: 'terminal',
+    label: '终端',
+    icon: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M5 7.4 6.4 6l6 6-6 6L5 16.6 9.6 12 5 7.4zM13 18h6v-2h-6v2z"/></svg>',
+  },
+  {
+    kind: 'files',
+    label: '文件',
+    icon: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>',
+  },
+  {
+    kind: 'review',
+    label: '审阅',
+    icon: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>',
+  },
+];
+
+function workspaceTabMeta(kind) {
+  return WORKSPACE_TAB_KINDS.find((item) => item.kind === kind) || null;
+}
+
+function chatTabAddWrap() {
+  return document.querySelector('.rp-tab-add-wrap:not(.external-tab-add-wrap)');
+}
+
+function closeExternalTabAddMenu() {
+  const menu = $('#external-tab-add-menu');
+  if (menu) menu.hidden = true;
+  $('#external-tab-add')?.setAttribute('aria-expanded', 'false');
+}
+
+function renderExternalTabAddMenu() {
+  const menu = $('#external-tab-add-menu');
+  if (!menu) return;
+  menu.innerHTML = WORKSPACE_TAB_KINDS.map((tab) => `
+    <button type="button" class="rp-add-item" role="menuitem" data-external-workspace-open="${tab.kind}">
+      ${tab.icon}${tab.label}
+    </button>`).join('');
+}
+
+function openWorkspaceTab(kind) {
+  if (!workspaceTabMeta(kind)) return;
+  if (!workspaceTabs.includes(kind)) workspaceTabs.push(kind);
+  activeWorkspaceTab = kind;
+  closeExternalTabAddMenu();
+  renderRightWorkspace();
+}
+
+function closeWorkspaceTab(kind) {
+  workspaceTabs = workspaceTabs.filter((item) => item !== kind);
+  if (activeWorkspaceTab === kind) {
+    activeWorkspaceTab = workspaceTabs[workspaceTabs.length - 1] || '';
+  }
+  if (kind === 'terminal') stopPowerShell();
+  renderRightWorkspace();
+}
+
+/** 关闭终端标签 = 结束 PowerShell 进程；下次打开标签时重新启动。 */
+function stopPowerShell() {
+  disposeXterm();
+  powerShellBuffers.clear();
+  deps.invoke('powershell_terminal_close', {}).catch(() => {});
+}
+
+function renderWorkspaceHome() {
+  return `
+    <div class="rp-home-spacer"></div>
+    <nav class="rp-tools" aria-label="打开工作区标签">
+      ${WORKSPACE_TAB_KINDS.map((tab) => `
+        <button type="button" class="rp-tool" data-external-workspace-open="${tab.kind}">
+          <span class="rp-tool-left">${tab.icon}${tab.label}</span>
+        </button>`).join('')}
+    </nav>
+    <p class="rp-home-note">点上方 + 或入口，将终端 / 文件 / 审阅加入标签页。终端在打开标签时启动 PowerShell，关闭标签即结束进程。</p>`;
+}
+
 function renderRightWorkspace() {
   const appState = deps?.getState?.();
   if (!appState?.rightOpen || !isAgentMode(appState.mode)) return;
@@ -1033,29 +1110,34 @@ function renderRightWorkspace() {
   const tabs = $('#right-tabs');
   const home = $('#rp-home');
   const content = $('#rp-content');
-  const addWrap = $('.rp-tab-add-wrap');
+  const externalAddWrap = $('#external-tab-add-wrap');
+  const chatAddWrap = chatTabAddWrap();
   if (!pane || !tabs || !content) return;
   pane.classList.add('is-external-workspace');
-  pane.dataset.view = `external-${activeWorkspaceTab}`;
+  pane.dataset.view = activeWorkspaceTab ? `external-${activeWorkspaceTab}` : 'external-home';
   if (home) home.hidden = true;
-  if (addWrap) addWrap.hidden = true;
-  const selected = findSession();
-  const selectedSession = selected?.session;
-  const project = selected?.project;
+  if (chatAddWrap) chatAddWrap.hidden = true;
+  if (externalAddWrap) externalAddWrap.hidden = false;
+  renderExternalTabAddMenu();
+
+  const selectedSession = findSession()?.session;
   const reviewCount = activeKind === 'codex' ? changesFromDiff(selectedSession?.realDiff).length : 2;
-  const selectedFile = currentAgentState().selectedFile;
-  const fileLabel = selectedFile?.split(/[\\/]/).filter(Boolean).pop() || '文件';
-  const terminalLabel = project?.name || '终端';
-  tabs.innerHTML = [
-    ['terminal', terminalLabel],
-    ['files', fileLabel],
-    ['review', '审阅'],
-  ].map(([kind, label]) => `
+  tabs.innerHTML = workspaceTabs.map((kind) => {
+    const meta = workspaceTabMeta(kind);
+    const count = kind === 'review' && reviewCount
+      ? `<b class="external-tab-count">${reviewCount}</b>`
+      : '';
+    return `
     <button type="button" class="rp-tab external-workspace-tab${activeWorkspaceTab === kind ? ' is-active' : ''}" data-external-workspace-tab="${kind}" role="tab" aria-selected="${activeWorkspaceTab === kind}">
-      <span class="rp-tab-label">${label}${kind === 'review' ? `<b class="external-tab-count">${reviewCount}</b>` : ''}</span>
-    </button>`).join('');
+      <span class="rp-tab-label">${meta.label}${count}</span>
+      <span class="rp-tab-close" title="关闭">×</span>
+    </button>`;
+  }).join('');
+
   content.hidden = false;
-  content.innerHTML = renderWorkspaceContent(activeWorkspaceTab);
+  content.innerHTML = activeWorkspaceTab
+    ? renderWorkspaceContent(activeWorkspaceTab)
+    : renderWorkspaceHome();
   bindWorkspaceContent();
   if (activeWorkspaceTab === 'terminal') {
     requestAnimationFrame(() => mountXterm(ensureSelection()?.project));
@@ -1089,7 +1171,7 @@ function renderWorkspaceContent(tab) {
     const changedPaths = new Set(session.messages?.flatMap((message) => message.changes || []).map((change) => change.path));
     return `
       <section class="external-files" aria-label="项目文件">
-        <header class="external-workspace-subhead"><span title="${escapeHtml(project.path)}">${escapeHtml(project.name)}</span><span class="external-workspace-actions"><button type="button" data-external-files-refresh title="刷新" aria-label="刷新文件">&#8635;</button></span></header>
+        <header class="external-workspace-subhead"><span title="${escapeHtml(project.path)}">${escapeHtml(project.name)}</span><span class="external-workspace-actions"><button type="button" data-external-files-refresh title="刷新" aria-label="刷新文件"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-8 8s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button></span></header>
         <div class="external-file-tree">${renderProjectFileTree(project, cached, project.path, 0, changedPaths, file?.fullPath) || '<div class="external-tree-empty">项目目录为空</div>'}</div>
         <div class="external-file-preview">
           <div class="external-file-preview-head"><span>${escapeHtml(file?.path || '选择文件')}</span><small>只读</small></div>
@@ -1123,10 +1205,19 @@ function renderWorkspaceContent(tab) {
 
 function bindWorkspaceContent() {
   $all('[data-external-workspace-tab]').forEach((button) => {
-    button.addEventListener('click', () => {
-      activeWorkspaceTab = button.dataset.externalWorkspaceTab;
+    button.addEventListener('click', (event) => {
+      const kind = button.dataset.externalWorkspaceTab;
+      if (event.target.closest('.rp-tab-close')) {
+        event.stopPropagation();
+        closeWorkspaceTab(kind);
+        return;
+      }
+      activeWorkspaceTab = kind;
       renderRightWorkspace();
     });
+  });
+  $all('[data-external-workspace-open]').forEach((button) => {
+    button.addEventListener('click', () => openWorkspaceTab(button.dataset.externalWorkspaceOpen));
   });
   $all('[data-external-file]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1652,6 +1743,14 @@ function bind() {
   $('#external-project-search')?.addEventListener('input', renderProjectTree);
   $('#external-project-tree')?.addEventListener('click', handleTreeAction);
   $('#external-toggle-workspace')?.addEventListener('click', () => deps.setRightOpen?.(!deps.getState().rightOpen));
+  $('#external-tab-add')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = $('#external-tab-add-menu');
+    if (!menu) return;
+    const open = menu.hidden;
+    menu.hidden = !open;
+    $('#external-tab-add')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
   $('#external-send')?.addEventListener('click', sendMessage);
   $('#external-composer-input')?.addEventListener('input', (event) => {
     event.target.style.height = '';
@@ -1664,7 +1763,6 @@ function bind() {
       sendMessage();
     }
   });
-  $('#external-chat-scroll')?.addEventListener('scroll', () => syncExternalChatRail(), { passive: true });
   $('#external-chat-scroll')?.addEventListener('click', (event) => {
     const decision = event.target.closest('[data-codex-decision]');
     if (decision) {
@@ -1680,9 +1778,8 @@ function bind() {
       input?.focus();
     }
     if (event.target.closest('[data-open-review]')) {
-      activeWorkspaceTab = 'review';
       deps.setRightOpen?.(true);
-      renderRightWorkspace();
+      openWorkspaceTab('review');
     }
   });
   $('#external-attach')?.addEventListener('click', () => $('#external-image-input')?.click());
@@ -1710,6 +1807,7 @@ function bind() {
   $('#external-open-project')?.addEventListener('click', showOpenProjectMenu);
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.external-popover-wrap, .external-open-wrap')) closeExternalPopovers();
+    if (!event.target.closest('#external-tab-add-wrap')) closeExternalTabAddMenu();
     const remove = event.target.closest('[data-external-remove-attachment]');
     if (remove) {
       composerAttachments = composerAttachments.filter((item) => item.id !== remove.dataset.externalRemoveAttachment);
@@ -1800,8 +1898,11 @@ function exit() {
   const pane = $('#right-pane');
   $('#app-body')?.classList.remove('is-external-agent-mode');
   pane?.classList.remove('is-external-workspace');
-  const addWrap = $('.rp-tab-add-wrap');
-  if (addWrap) addWrap.hidden = false;
+  closeExternalTabAddMenu();
+  const externalAddWrap = $('#external-tab-add-wrap');
+  if (externalAddWrap) externalAddWrap.hidden = true;
+  const chatAddWrap = chatTabAddWrap();
+  if (chatAddWrap) chatAddWrap.hidden = false;
 }
 
 async function refresh() {

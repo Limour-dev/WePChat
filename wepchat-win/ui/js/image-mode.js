@@ -487,6 +487,8 @@
     return (root || document).querySelector(sel);
   }
 
+  const PIN_SVG = '<svg class="session-pin" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>';
+
   function renderImageSessionList() {
     const state = S();
     const listEl = $('#image-session-list');
@@ -512,16 +514,12 @@
     listEl.hidden = false;
     listEl.innerHTML = sessions.map((s) => {
       const active = state.session?.id === s.id ? ' is-active' : '';
+      const pinned = s.pinned ? ' is-pinned' : '';
       const title = s.title || '未命名生图';
-      const meta = [
-        s.model || '',
-        imageCountOfSession(s) ? imageCountOfSession(s) + ' 张' : '',
-      ].filter(Boolean).join(' · ');
-      return `<li class="session-item${active}" data-id="${escapeAttr(s.id)}">
+      return `<li class="session-item${active}${pinned}" data-id="${escapeAttr(s.id)}">
         <div class="session-item-row">
-          <button type="button" class="session-item-btn" data-act="open-image-session">
-            <span class="session-title">${escapeHtml(title)}</span>
-            <span class="session-meta">${escapeHtml(meta.slice(0, 36))}</span>
+          <button type="button" class="session-item-btn" data-act="open-image-session" title="${escapeAttr(title)}">
+            ${s.pinned ? PIN_SVG : ''}<span class="session-item-title">${escapeHtml(title)}</span>
           </button>
           <button type="button" class="session-item-more" data-act="image-session-menu" title="会话操作" aria-label="会话操作">⋯</button>
         </div>
@@ -535,14 +533,23 @@
     }).join('');
   }
 
-  function imageCountOfSession(session) {
-    const canvasCount = Array.isArray(session?.imageCanvas?.items) ? session.imageCanvas.items.length : 0;
-    const messageCount = (session?.messages || []).reduce((sum, m) => sum + (Array.isArray(m.images) ? m.images.length : 0), 0);
-    return Math.max(canvasCount, messageCount);
-  }
-
   function closeImageSessionMenus() {
     document.querySelectorAll('.image-session-menu').forEach((menu) => { menu.hidden = true; });
+  }
+
+  let timelineRail = null;
+
+  function ensureTimelineRail() {
+    if (timelineRail || !window.ChatRail) return timelineRail;
+    const root = $('#image-chat-rail');
+    const host = $('#image-timeline');
+    if (!root || !host) return null;
+    timelineRail = window.ChatRail.create({
+      root,
+      scrollHost: host,
+      getMessageElement: (id) => host.querySelector(`[data-message-id="${window.CSS?.escape ? CSS.escape(id) : id}"]`),
+    });
+    return timelineRail;
   }
 
   function renderImageTimeline() {
@@ -552,46 +559,50 @@
     const session = state?.session;
     if (!session || session.mode !== 'image') {
       scroll.innerHTML = emptyWelcomeHtml();
+      ensureTimelineRail()?.update([]);
       return;
     }
     const messages = session.messages || [];
     if (!messages.length) {
       scroll.innerHTML = emptyWelcomeHtml();
+      ensureTimelineRail()?.update([]);
       return;
     }
     scroll.innerHTML = messages.map((m) => {
       if (m.role === 'user') {
         const refModeLabel = m.imageReferenceMode === 'edit' ? '编辑' : '参考';
-        return `<div class="img-msg img-msg--user">
-          <div class="img-msg-bubble">${escapeHtml(m.content || '')}</div>
-          ${m.referenceFiles && m.referenceFiles.length
-            ? `<div class="img-msg-ref">${refModeLabel}：${escapeHtml(m.referenceFiles.join(', '))}</div>`
+        const refNames = (m.referenceFiles || []).map((p) => String(p).split(/[\\/]/).pop() || p);
+        return `<div class="chat-message chat-message--user" data-message-id="${escapeAttr(m.id)}">
+          <div class="chat-message-body">${escapeHtml(m.content || '')}</div>
+          ${refNames.length
+            ? `<div class="img-msg-ref" title="${escapeAttr(m.referenceFiles.join(', '))}">${refModeLabel}：${escapeHtml(refNames.join('、'))}</div>`
             : ''}
         </div>`;
       }
       if (m.role === 'assistant') {
         const status = m.status === 'streaming' || m.status === 'running'
-          ? `<div class="img-msg-status">${escapeHtml(m.statusText || '生成中…')}</div>`
+          ? `<div class="img-msg-status"><span class="typing-dot" aria-hidden="true"></span>${escapeHtml(m.statusText || '生成中…')}</div>`
           : '';
-        const err = m.error ? `<div class="img-msg-error">${escapeHtml(m.error)}</div>` : '';
+        const err = m.error ? `<div class="chat-message-body has-error">${escapeHtml(m.error)}</div>` : '';
         const imgs = (m.images || []).map((img) => {
           const src = img.dataUrl || '';
-          return `<button type="button" class="img-msg-thumb" data-path="${escapeAttr(img.path)}" title="${escapeAttr(img.path)}">
+          return `<button type="button" class="chat-image-card" data-path="${escapeAttr(img.path)}" title="${escapeAttr(img.path)}">
             ${src ? `<img src="${escapeAttr(src)}" alt="" />` : `<span>${escapeHtml(img.path)}</span>`}
           </button>`;
         }).join('');
-        return `<div class="img-msg img-msg--assistant">
+        return `<div class="chat-message chat-message--assistant" data-message-id="${escapeAttr(m.id)}">
           ${status}
           ${err}
-          ${m.content && !imgs ? `<div class="img-msg-text">${escapeHtml(m.content)}</div>` : ''}
-          ${imgs ? `<div class="img-msg-grid">${imgs}</div>` : ''}
+          ${m.content && !imgs && !m.error ? `<div class="chat-message-body">${escapeHtml(m.content)}</div>` : ''}
+          ${imgs ? `<div class="chat-image-grid">${imgs}</div>` : ''}
         </div>`;
       }
       return '';
     }).join('');
     scroll.scrollTop = scroll.scrollHeight;
+    ensureTimelineRail()?.update(messages);
 
-    scroll.querySelectorAll('.img-msg-thumb').forEach((btn) => {
+    scroll.querySelectorAll('.chat-image-card').forEach((btn) => {
       btn.addEventListener('click', () => {
         const path = btn.getAttribute('data-path');
         if (path) focusImageOnCanvas(path);
@@ -667,7 +678,7 @@
 
   function updateReferenceModeUi() {
     document.querySelectorAll('[data-ref-mode]').forEach((btn) => {
-      btn.classList.toggle('is-active', btn.getAttribute('data-ref-mode') === referenceMode);
+      btn.classList.toggle('is-on', btn.getAttribute('data-ref-mode') === referenceMode);
     });
   }
 
@@ -771,15 +782,15 @@
       }
     });
     pop.innerHTML = groups.length ? groups.map((group) => `
-      <div class="image-picker-group">
-        <div class="image-picker-group-title">${escapeHtml(group.label)}</div>
+      <div class="model-picker-group">
+        <div class="model-picker-group-title">${escapeHtml(group.label)}</div>
         ${group.options.map((opt) => `
-          <button type="button" class="image-picker-option${opt.selected ? ' is-active' : ''}" data-image-model-value="${escapeAttr(opt.value)}" role="option" aria-selected="${opt.selected ? 'true' : 'false'}">
-            <span>${escapeHtml(opt.textContent || '')}</span>
+          <button type="button" class="model-picker-option${opt.selected ? ' is-active' : ''}" data-image-model-value="${escapeAttr(opt.value)}" role="option" aria-selected="${opt.selected ? 'true' : 'false'}">
+            <span class="model-picker-model">${escapeHtml(opt.textContent || '')}</span>
           </button>
         `).join('')}
       </div>
-    `).join('') : '<div class="image-picker-empty">暂无生图模型</div>';
+    `).join('') : '<div class="model-picker-group-title">暂无生图模型</div>';
   }
 
   function renderImageSizePicker() {
@@ -802,6 +813,7 @@
     const sizeBtn = $('#image-size-picker-btn');
     if (except !== 'model' && model && modelBtn) {
       model.hidden = true;
+      modelBtn.closest('.model-switch')?.classList.remove('is-open');
       modelBtn.setAttribute('aria-expanded', 'false');
     }
     if (except !== 'size' && size && sizeBtn) {
@@ -1102,7 +1114,10 @@
     const send = $('#btn-image-send');
     const stop = $('#btn-image-stop');
     if (input) input.disabled = !!busy;
-    if (send) send.hidden = !!busy;
+    if (send) {
+      send.hidden = !!busy;
+      send.classList.toggle('is-ready', !busy && !!input?.value.trim());
+    }
     if (stop) stop.hidden = !busy;
   }
 
@@ -1341,7 +1356,7 @@
         closeImagePickers();
         return;
       }
-      if (!e.target.closest?.('.image-model-picker-popover, .image-model-picker-btn, .image-size-picker-popover, .image-size-picker-btn')) {
+      if (!e.target.closest?.('.model-picker-popover, .model-picker-btn, .image-size-picker-popover, .image-size-picker-btn')) {
         closeImagePickers();
         closeImageSessionMenus();
       }
@@ -1374,6 +1389,7 @@
       const open = !!modelPickerPopover?.hidden;
       closeImagePickers(open ? 'model' : undefined);
       if (modelPickerPopover) modelPickerPopover.hidden = !open;
+      modelPickerBtn.closest('.model-switch')?.classList.toggle('is-open', open);
       modelPickerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
     sizePickerBtn?.addEventListener('click', (event) => {
@@ -1386,7 +1402,10 @@
     send?.addEventListener('click', () => sendImagePrompt(input?.value || ''));
     stop?.addEventListener('click', stopGenerate);
     autoResizeImageInput(input);
-    input?.addEventListener('input', () => autoResizeImageInput(input));
+    input?.addEventListener('input', () => {
+      autoResizeImageInput(input);
+      send?.classList.toggle('is-ready', !!input.value.trim() && !generating);
+    });
     input?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();

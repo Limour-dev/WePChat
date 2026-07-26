@@ -147,6 +147,24 @@ impl PowerShellTerminal {
         Ok(connection)
     }
 
+    /// 结束指定终端；不传 id 时结束全部（前端关闭「终端」标签时调用）。
+    fn close(&self, terminal_id: Option<&str>) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            match terminal_id {
+                Some(id) => {
+                    if let Some(connection) = sessions.remove(id) {
+                        connection.shutdown();
+                    }
+                }
+                None => {
+                    for (_, connection) in sessions.drain() {
+                        connection.shutdown();
+                    }
+                }
+            }
+        }
+    }
+
     pub fn shutdown(&self) {
         if let Ok(mut sessions) = self.sessions.lock() {
             for (_, connection) in sessions.drain() {
@@ -204,6 +222,20 @@ pub async fn powershell_terminal_resize(
         terminal
             .get_or_start(&app, &terminal_id, cols, rows)
             .and_then(|connection| connection.resize(cols, rows))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn powershell_terminal_close(
+    state: tauri::State<'_, PowerShellTerminal>,
+    terminal_id: Option<String>,
+) -> Result<(), String> {
+    let terminal = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal.close(terminal_id.as_deref());
+        Ok(())
     })
     .await
     .map_err(|error| error.to_string())?

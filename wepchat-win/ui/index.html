@@ -135,18 +135,10 @@
             </svg>
             新建生图
           </button>
-          <header class="list-header image-list-title-row">
-            <h1 class="list-title">生图</h1>
-            <button type="button" class="icon-btn" id="btn-new-image-compact" title="新建生图">
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-              </svg>
-            </button>
-          </header>
           <div class="list-body">
             <div class="empty-hint" id="image-list-empty">
               <p class="empty-title">暂无生图会话</p>
-              <p class="empty-desc">点右上角新建，描述你想要的画面。</p>
+              <p class="empty-desc">新建一条，描述你想要的画面。</p>
             </div>
             <ul class="session-list" id="image-session-list" hidden></ul>
           </div>
@@ -156,10 +148,7 @@
           <header class="external-list-head">
             <div class="external-list-agent">
               <span class="external-brand-mark" id="external-list-brand" aria-hidden="true"></span>
-              <div>
-                <h1 class="list-title" id="external-list-title">Codex</h1>
-                <span class="external-preview-label">本地工作区</span>
-              </div>
+              <h1 class="list-title" id="external-list-title">Codex</h1>
             </div>
             <button type="button" class="icon-btn" id="external-add-project" title="添加项目" aria-label="添加项目">
               <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
@@ -167,16 +156,10 @@
               </svg>
             </button>
           </header>
-          <div class="list-search external-project-search">
+          <div class="list-search">
             <input type="search" id="external-project-search" placeholder="搜索项目或会话" aria-label="搜索项目或会话" />
           </div>
           <div class="external-project-tree" id="external-project-tree" role="tree"></div>
-          <footer class="external-list-foot">
-            <span class="external-status-dot"></span>
-            <span>界面预览</span>
-            <span class="external-list-foot-sep">·</span>
-            <span>按需启动连接</span>
-          </footer>
         </section>
 
         <section class="list-panel" data-panel="settings">
@@ -323,56 +306,62 @@
               <header class="main-top">
                 <div class="main-top-left"></div>
                 <div class="main-top-center">
-                  <label class="model-switch" title="选择生图模型">
+                  <div class="model-switch" title="选择生图模型">
                     <select id="image-model-select" class="model-select" aria-label="选择生图模型" disabled>
                       <option value="">选择生图模型</option>
                     </select>
-                    <button type="button" class="image-model-picker-btn" id="image-model-picker-btn" aria-haspopup="listbox" aria-expanded="false" disabled>
-                      <span id="image-model-picker-title">选择生图模型</span>
+                    <button type="button" class="model-picker-btn" id="image-model-picker-btn" aria-haspopup="listbox" aria-expanded="false" disabled>
+                      <span class="model-picker-title" id="image-model-picker-title">选择生图模型</span>
                       <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
                         <path fill="currentColor" d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
                       </svg>
                     </button>
-                    <div class="image-model-picker-popover" id="image-model-picker-popover" role="listbox" hidden></div>
+                    <div class="model-picker-popover" id="image-model-picker-popover" role="listbox" hidden></div>
                     <span class="model-provider" id="image-model-label">尚未配置生图模型</span>
-                  </label>
+                  </div>
                 </div>
-                <div class="main-top-right"></div>
+                <div class="main-top-right">
+                  <button type="button" class="tool-btn" id="btn-new-image-compact" title="新建生图">
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                      <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                    </svg>
+                  </button>
+                </div>
               </header>
-
-              <div class="image-workbench">
-                <div class="image-timeline" id="image-timeline"></div>
-                <footer class="image-composer">
-                  <div class="img-ref-chip" id="image-ref-chip" hidden>
-                    <span>参考</span>
-                    <span class="img-ref-path"></span>
-                    <button type="button" class="img-ref-clear" id="btn-image-ref-clear" title="清除参考">×</button>
-                  </div>
-                  <div class="img-ref-mode" id="image-ref-mode" hidden role="group" aria-label="图片输入模式">
-                    <button type="button" class="img-ref-mode-btn is-active" data-ref-mode="reference">参考生成</button>
-                    <button type="button" class="img-ref-mode-btn" data-ref-mode="edit">编辑图片</button>
-                  </div>
-                  <div class="image-composer-box">
-                    <div class="image-size-picker">
-                      <select id="image-size-select" class="image-size-select" title="尺寸" aria-label="图片尺寸"></select>
-                      <button type="button" class="image-size-picker-btn" id="image-size-picker-btn" aria-haspopup="listbox" aria-expanded="false">auto</button>
-                      <div class="image-size-picker-popover" id="image-size-picker-popover" role="listbox" hidden></div>
-                    </div>
-                    <textarea id="image-composer-input" rows="1" placeholder="描述你想生成的图片…"></textarea>
-                    <button type="button" class="send-btn" id="btn-image-send" title="生成" aria-label="生成">
-                      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                        <path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" />
-                      </svg>
-                    </button>
-                    <button type="button" class="send-btn is-stop" id="btn-image-stop" title="停止" aria-label="停止" hidden>
-                      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                        <path fill="currentColor" d="M6 6h12v12H6z" />
-                      </svg>
-                    </button>
-                  </div>
-                  <p class="composer-hint">生图模式仅调用图片模型 · 图会保存到当前会话工作区</p>
-                </footer>
+              <div class="image-timeline" id="image-timeline"></div>
+              <div class="chat-rail" id="image-chat-rail" aria-label="消息位置" hidden>
+                <div class="chat-rail-viewport"><div class="chat-rail-track"></div></div>
+                <div class="chat-rail-tip" hidden></div>
               </div>
+              <footer class="composer image-composer">
+                <div class="img-ref-chip" id="image-ref-chip" hidden>
+                  <span>参考</span>
+                  <span class="img-ref-path"></span>
+                  <button type="button" class="img-ref-clear" id="btn-image-ref-clear" title="清除参考">×</button>
+                </div>
+                <div class="seg img-ref-mode" id="image-ref-mode" hidden role="group" aria-label="图片输入模式">
+                  <button type="button" class="seg-btn is-on" data-ref-mode="reference">参考生成</button>
+                  <button type="button" class="seg-btn" data-ref-mode="edit">编辑图片</button>
+                </div>
+                <div class="composer-box image-composer-box">
+                  <div class="image-size-picker">
+                    <select id="image-size-select" class="image-size-select" title="尺寸" aria-label="图片尺寸"></select>
+                    <button type="button" class="image-size-picker-btn" id="image-size-picker-btn" aria-haspopup="listbox" aria-expanded="false">auto</button>
+                    <div class="image-size-picker-popover" id="image-size-picker-popover" role="listbox" hidden></div>
+                  </div>
+                  <textarea id="image-composer-input" rows="1" placeholder="描述你想生成的图片…"></textarea>
+                  <button type="button" class="send-btn" id="btn-image-send" title="生成" aria-label="生成">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" />
+                    </svg>
+                  </button>
+                  <button type="button" class="send-btn is-stop" id="btn-image-stop" title="停止" aria-label="停止" hidden>
+                    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                      <path fill="currentColor" d="M6 6h12v12H6z" />
+                    </svg>
+                  </button>
+                </div>
+              </footer>
             </section>
             <section class="image-canvas-main" aria-label="生图画布">
               <div class="img-canvas-host" id="image-canvas-host"></div>
@@ -409,10 +398,10 @@
 
           <div class="external-chat-scroll" id="external-chat-scroll" aria-live="polite"></div>
 
-          <footer class="external-composer">
-            <div class="external-composer-box">
-              <div class="external-composer-attachments" id="external-composer-attachments" hidden></div>
-              <button type="button" class="icon-btn external-attach" id="external-attach" title="添加图片" aria-label="添加图片">
+          <footer class="composer external-composer">
+            <div class="external-composer-attachments" id="external-composer-attachments" hidden></div>
+            <div class="composer-box external-composer-box">
+              <button type="button" class="icon-btn composer-plus external-attach" id="external-attach" title="添加图片" aria-label="添加图片">
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a3 3 0 0 1 6 0v11.5a1.5 1.5 0 0 1-3 0V6H12v10.5a.5.5 0 0 0 1 0V5a2.5 2.5 0 0 0-5 0v12.5a4 4 0 0 0 8 0V6h.5z"/></svg>
               </button>
               <input type="file" id="external-image-input" accept="image/*" hidden />
@@ -798,6 +787,12 @@
                 运行
               </button>
             </div>
+          </div>
+          <div class="rp-tab-add-wrap external-tab-add-wrap" id="external-tab-add-wrap" hidden>
+            <button type="button" class="rp-tab-add" id="external-tab-add" title="新建标签页" aria-haspopup="menu" aria-expanded="false">
+              +
+            </button>
+            <div class="rp-add-menu" id="external-tab-add-menu" role="menu" hidden></div>
           </div>
           <div class="rp-tabbar-actions">
             <button type="button" class="rp-icon" id="btn-close-right" title="关闭侧栏" aria-label="关闭侧栏">
