@@ -3654,8 +3654,12 @@ textarea,
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
   padding: 18px 20px 16px;
+}
+
+.provider-form::-webkit-scrollbar {
+  display: none;
 }
 
 .dialog-head {
@@ -4841,6 +4845,7 @@ dialog #wc-toast {
 /* Segmented control — pill track, selected chip */
 .seg {
   display: inline-flex;
+  width: max-content;
   flex-shrink: 0;
   align-items: center;
   gap: 2px;
@@ -4861,6 +4866,7 @@ dialog #wc-toast {
   border-radius: 8px;
   cursor: pointer;
   line-height: 1.2;
+  white-space: nowrap;
   transition: background 0.12s var(--ease), color 0.12s var(--ease), box-shadow 0.12s var(--ease);
 }
 
