@@ -11,7 +11,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
-use crate::external_agent::{quote_cmd_arg, resolve_command_path, version_of};
+use crate::external_agent::{
+    configure_background_command, quote_cmd_arg, resolve_command_path, version_of,
+};
 use crate::settings::SettingsStore;
 
 const PI_EVENT: &str = "pi-agent";
@@ -205,6 +207,7 @@ fn pi_command(config: &PiLaunchConfig, session_args: Vec<String>) -> Command {
         }
     };
     command.envs(&config.env);
+    configure_background_command(&mut command);
     command
 }
 
@@ -364,12 +367,6 @@ fn start_pi_session(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("无法启动 Pi：{error}"))?;

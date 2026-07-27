@@ -56,6 +56,17 @@ struct AgentLaunchConfig {
     env: HashMap<String, String>,
 }
 
+#[cfg(windows)]
+pub(crate) fn configure_background_command(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+pub(crate) fn configure_background_command(_command: &mut Command) {}
+
 fn supported_agents() -> Vec<SupportedAgent> {
     vec![
         SupportedAgent {
@@ -112,20 +123,17 @@ fn has_path_separator(value: &str) -> bool {
 }
 
 fn where_command(command: &str) -> Result<Option<String>, String> {
-    let output = if cfg!(windows) {
+    let mut locator = if cfg!(windows) {
         Command::new("where")
-            .arg(command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
     } else {
         Command::new("which")
-            .arg(command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-    }
-    .map_err(|e| e.to_string())?;
+    };
+    locator
+        .arg(command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_background_command(&mut locator);
+    let output = locator.output().map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Ok(None);
@@ -161,22 +169,22 @@ pub(crate) fn resolve_command_path(path_or_command: &str) -> Result<Option<Strin
 }
 
 pub(crate) fn version_of(path_or_command: &str) -> Option<String> {
-    Command::new(path_or_command)
+    let mut command = Command::new(path_or_command);
+    command
         .arg("--version")
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .ok()
-        .and_then(|out| {
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            let text = if !stdout.is_empty() { stdout } else { stderr };
-            if text.is_empty() {
-                None
-            } else {
-                Some(text.lines().next().unwrap_or("").trim().to_string())
-            }
-        })
+        .stderr(Stdio::piped());
+    configure_background_command(&mut command);
+    command.output().ok().and_then(|out| {
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let text = if !stdout.is_empty() { stdout } else { stderr };
+        if text.is_empty() {
+            None
+        } else {
+            Some(text.lines().next().unwrap_or("").trim().to_string())
+        }
+    })
 }
 
 fn codex_launch_config(app: &AppHandle) -> Result<AgentLaunchConfig, String> {
@@ -286,6 +294,7 @@ fn codex_command(config: &AgentLaunchConfig) -> Command {
         command
     };
     command.envs(&config.env);
+    configure_background_command(&mut command);
     command
 }
 
