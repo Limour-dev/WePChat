@@ -1,6 +1,6 @@
 [package]
 name = "wepchat"
-version = "0.1.0"
+version = "0.1.1"
 description = "WePChat — lightweight local AI chat for Windows"
 authors = ["WEP"]
 edition = "2021"
