@@ -87,13 +87,15 @@ let activeKind = 'codex';
 let workspaceTabs = [];
 let activeWorkspaceTab = '';
 let mockData = loadMockData();
-let responseTimer = 0;
 let codexModels = [];
 let codexReadyPromise = null;
 let codexUnlisten = null;
 let claudeModels = [];
 let claudeUnlisten = null;
 let claudeRenderTimer = 0;
+let piModels = [];
+let piUnlisten = null;
+let piRenderTimer = 0;
 let powerShellUnlisten = null;
 let xtermSession = null;
 let composerAttachments = [];
@@ -102,12 +104,9 @@ const codexReadyThreads = new Set();
 const codexFileCache = new Map();
 const claudeAliveKeys = new Set();
 const claudeStartPromises = new Map();
+const piAliveKeys = new Set();
+const piStartPromises = new Map();
 const powerShellBuffers = new Map();
-
-/** codex 与 claude 走真实连接；pi 仍是 mock。 */
-function isLiveKind(kind = activeKind) {
-  return kind === 'codex' || kind === 'claude';
-}
 
 function appendPowerShellOutput(terminalId, text) {
   const buffer = `${powerShellBuffers.get(terminalId) || ''}${text || ''}`;
@@ -212,7 +211,7 @@ function supportedEfforts(model = selectedCodexModel()) {
 }
 
 function effortLabel(value) {
-  return ({ none: '无', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大' })[value] || '';
+  return ({ off: '关', none: '无', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大' })[value] || '';
 }
 
 function permissionTable(kind = activeKind) {
@@ -225,12 +224,12 @@ function permissionProfile() {
 }
 
 function closeExternalPopovers(except = null) {
-  ['external-open-menu', 'external-permission-menu', 'external-model-menu'].forEach((id) => {
+  ['external-open-menu', 'external-permission-menu', 'external-model-menu', 'external-connection-menu'].forEach((id) => {
     const menu = $(`#${id}`);
     if (!menu || menu === except) return;
     menu.hidden = true;
   });
-  ['external-open-project', 'external-permission-toggle', 'external-model-toggle'].forEach((id) => {
+  ['external-open-project', 'external-permission-toggle', 'external-model-toggle', 'external-runtime-state'].forEach((id) => {
     const button = $(`#${id}`);
     if (button) button.setAttribute('aria-expanded', 'false');
   });
@@ -350,18 +349,21 @@ function createSeedData() {
       ],
     },
     pi: {
-      selectedSessionId: 'pi-session-reference',
-      model: 'claude-sonnet-4.5',
-      context: 12,
+      rpcReady: true,
+      selectedSessionId: 'pi-session-shell',
+      model: '',
+      thinkingLevel: '',
+      permission: '',
+      context: 0,
+      contextKnown: false,
       projects: [
         {
-          id: 'pi-project-desktop',
-          name: 'PiDesktop',
-          path: 'E:\\wepchat\\wepchat\\wepchat-win\\example\\PiDesktop',
+          id: 'pi-project-wepchat',
+          name: 'wepchat-win',
+          path: 'E:\\wepchat\\wepchat\\wepchat-win',
           open: true,
           sessions: [
-            { id: 'pi-session-reference', title: '提取桌面工作区设计', updated: '刚刚', messages: seedMessages('pi') },
-            { id: 'pi-session-terminal', title: '终端会话设计', updated: '周三', messages: [] },
+            { id: 'pi-session-shell', title: '新会话', updated: '刚刚', messages: [] },
           ],
         },
       ],
@@ -394,12 +396,15 @@ function loadMockData() {
   try {
     const saved = JSON.parse(localStorage.getItem(MOCK_STORAGE_KEY) || 'null');
     if (!saved || typeof saved !== 'object') return fallback;
+    // pi 从 mock 占位切换为真实连接：清掉旧的演示数据，换成真实种子。
+    if (!saved.pi?.rpcReady) saved.pi = fallback.pi;
     AGENTS.forEach(({ kind }) => {
       if (!saved[kind]?.projects?.length) saved[kind] = fallback[kind];
       saved[kind].permission ||= kind === 'pi' ? '' : 'request';
       saved[kind].effort ||= '';
       saved[kind].contextKnown = !!saved[kind].contextKnown;
     });
+    saved.pi.thinkingLevel ||= '';
     return saved;
   } catch {
     return fallback;
@@ -474,8 +479,10 @@ function renderAgentToggleAvailability() {
   AGENTS.forEach((agent) => {
     const toggle = $(`#external-${agent.kind}-enabled`);
     const path = $(`#external-${agent.kind}-path`);
+    const browse = $(`[data-external-browse="${agent.kind}"]`);
     if (toggle) toggle.disabled = !masterEnabled;
     if (path) path.disabled = !masterEnabled;
+    if (browse) browse.disabled = !masterEnabled;
   });
 }
 
@@ -509,6 +516,15 @@ async function saveSettings() {
     claudeModels = [];
     clearClaudeRuntime(false);
     mockData.claude.connectionStatus = 'disconnected';
+  }
+  const piConfigChanged = previousExternal.agents?.pi?.commandPath !== nextExternal.agents?.pi?.commandPath;
+  if (!nextExternal.enabled || !nextExternal.agents?.pi?.enabled || piConfigChanged) {
+    await deps.invoke('pi_stop_all').catch(() => {});
+    piAliveKeys.clear();
+    piStartPromises.clear();
+    piModels = [];
+    clearPiRuntime(false);
+    mockData.pi.connectionStatus = 'disconnected';
   }
   syncNavigation(nextExternal);
   if (status) status.textContent = '已保存';
@@ -591,6 +607,14 @@ function findCodexSession(threadId) {
 
 function nowLabel() {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** 运行中追加消息：新 user 气泡插到当前流式 assistant 气泡之前，避免视觉错序。 */
+function insertRunningUserMessage(session, message) {
+  session.messages ||= [];
+  const last = session.messages[session.messages.length - 1];
+  const at = last?.role === 'assistant' ? session.messages.length - 1 : session.messages.length;
+  session.messages.splice(at, 0, message);
 }
 
 function ensureSelection() {
@@ -685,6 +709,10 @@ function renderComposerAttachments() {
 }
 
 function renderPermissionMenu() {
+  const toggle = $('#external-permission-toggle');
+  // pi 无内建权限系统（security.md 设计取舍），不显示权限菜单，也不伪造档位。
+  if (toggle) toggle.hidden = activeKind === 'pi';
+  if (activeKind === 'pi') return;
   const selected = currentAgentState().permission || 'request';
   const table = permissionTable();
   const label = $('#external-permission-label');
@@ -700,6 +728,43 @@ function renderPermissionMenu() {
 
 function selectedClaudeModel() {
   return claudeModels.find((model) => model.value === mockData.claude.model) || null;
+}
+
+const PI_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+
+function piModelKey(model) {
+  return model ? `${model.provider}/${model.id}` : '';
+}
+
+function selectedPiModel() {
+  return piModels.find((model) => piModelKey(model) === mockData.pi.model) || null;
+}
+
+function renderPiModelMenu(button, label, effort, menu) {
+  const connected = piModels.length > 0;
+  const model = selectedPiModel();
+  if (button) button.disabled = !connected;
+  if (label) label.textContent = model?.name || mockData.pi.currentModel || '模型';
+  if (effort) {
+    effort.textContent = connected && model?.reasoning && mockData.pi.thinkingLevel && mockData.pi.thinkingLevel !== 'off'
+      ? (effortLabel(mockData.pi.thinkingLevel) || mockData.pi.thinkingLevel)
+      : '';
+  }
+  if (!menu) return;
+  if (!connected) {
+    menu.innerHTML = '';
+    return;
+  }
+  // pi 的 thinkingLevel 是会话级设置（set_thinking_level），独立于模型参数。
+  menu.innerHTML = `
+    <div class="external-menu-section"><span>模型</span>${piModels.map((item) => `
+      <button type="button" class="external-menu-option external-model-option${piModelKey(item) === mockData.pi.model ? ' is-selected' : ''}" data-external-model="${escapeHtml(piModelKey(item))}" role="menuitemradio" aria-checked="${piModelKey(item) === mockData.pi.model}">
+        <strong>${escapeHtml(item.name)}</strong>${piModelKey(item) === mockData.pi.model ? '<b aria-hidden="true">&#10003;</b>' : ''}
+      </button>`).join('')}</div>
+    ${model?.reasoning ? `<div class="external-menu-section"><span>思考深度</span>${PI_THINKING_LEVELS.map((value) => `
+      <button type="button" class="external-menu-option external-model-option${mockData.pi.thinkingLevel === value ? ' is-selected' : ''}" data-external-effort="${escapeHtml(value)}" role="menuitemradio" aria-checked="${mockData.pi.thinkingLevel === value}">
+        <strong>${escapeHtml(effortLabel(value) || value)}</strong>${mockData.pi.thinkingLevel === value ? '<b aria-hidden="true">&#10003;</b>' : ''}
+      </button>`).join('')}</div>` : ''}`;
 }
 
 function renderClaudeModelMenu(button, label, effort, menu) {
@@ -731,6 +796,10 @@ function renderModelMenu() {
   const effort = $('#external-effort-label');
   if (activeKind === 'claude') {
     renderClaudeModelMenu(button, label, effort, $('#external-model-menu'));
+    return;
+  }
+  if (activeKind === 'pi') {
+    renderPiModelMenu(button, label, effort, $('#external-model-menu'));
     return;
   }
   const model = selectedCodexModel();
@@ -855,6 +924,16 @@ function renderMessages() {
           <button type="button" class="primary-btn" data-codex-decision="accept">允许一次</button>
         </div>
       </section>` : '';
+    const uiRequest = message.uiRequest && !message.uiRequest.resolved ? `
+      <section class="external-approval" data-ui-request-message="${escapeHtml(message.id)}">
+        <div class="external-approval-head"><strong>${escapeHtml(message.uiRequest.title)}</strong>${message.uiRequest.message ? `<small>${escapeHtml(message.uiRequest.message)}</small>` : ''}</div>
+        <div class="external-approval-actions">
+          ${message.uiRequest.method === 'confirm'
+            ? '<button type="button" class="secondary-btn" data-pi-ui-cancel>取消</button><button type="button" class="primary-btn" data-pi-ui-confirm>确认</button>'
+            : `<button type="button" class="secondary-btn" data-pi-ui-cancel>取消</button>${message.uiRequest.options.map((option) => `
+              <button type="button" class="primary-btn" data-pi-ui-option="${escapeHtml(option)}">${escapeHtml(option)}</button>`).join('')}`}
+        </div>
+      </section>` : '';
     const changes = message.changes?.length ? `
       <button type="button" class="external-change-summary" data-open-review>
         <span><strong>${message.changes.length} 个文件有变更</strong><small>打开审阅查看 diff</small></span>
@@ -872,6 +951,7 @@ function renderMessages() {
         ${pending}
         ${body}
         ${approval}
+        ${uiRequest}
         ${changes}
       </article>`;
   }).join('')}</div>`;
@@ -884,20 +964,24 @@ function renderMessages() {
 
 function renderComposerState() {
   const send = $('#external-send');
+  const stop = $('#external-stop');
   const input = $('#external-composer-input');
   if (!send || !input) return;
-  const running = isLiveKind() ? !!findSession()?.session?.running : !!currentAgentState().running;
+  const running = !!findSession()?.session?.running;
   const hasSession = !!findSession();
   const hasDraft = !!input.value.trim() || !!composerAttachments.length;
   input.disabled = !hasSession;
-  send.disabled = !hasSession || (!running && !hasDraft);
-  send.classList.toggle('is-stop', running);
-  send.classList.toggle('is-ready', running || (hasSession && hasDraft));
-  send.title = running ? '停止' : '发送';
-  send.setAttribute('aria-label', running ? '停止' : '发送');
-  send.innerHTML = running
-    ? '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 6h12v12H6z"/></svg>'
-    : '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg>';
+  // 发送键任务中也可用：追加消息（steer）走 sendXMessage 内部分叉；停止是独立按钮。
+  send.disabled = !hasSession || !hasDraft;
+  send.classList.toggle('is-ready', hasSession && hasDraft);
+  if (stop) stop.hidden = !running;
+  const attach = $('#external-attach');
+  if (attach) {
+    // 图片输入按当前模型能力门控（pi 的 Model.input 需含 "image"）。
+    const noImage = activeKind === 'pi' && piModels.length > 0 && !(selectedPiModel()?.input || []).includes('image');
+    attach.disabled = noImage;
+    attach.title = noImage ? '当前模型不支持图片输入' : '添加图片';
+  }
   renderComposerAttachments();
   renderPermissionMenu();
   renderModelMenu();
@@ -906,7 +990,7 @@ function renderComposerState() {
 function renderRuntimeState() {
   const host = $('#external-runtime-state');
   if (!host) return;
-  let status = 'mock';
+  let status = 'disconnected';
   if (activeKind === 'codex') {
     status = findSession()?.session?.running ? 'working' : (mockData.codex.connectionStatus || 'disconnected');
   } else if (activeKind === 'claude') {
@@ -918,6 +1002,15 @@ function renderRuntimeState() {
         : session && claudeAliveKeys.has(session.id)
           ? 'connected'
           : mockData.claude.connectionStatus === 'error' ? 'error' : 'disconnected';
+  } else if (activeKind === 'pi') {
+    const session = findSession()?.session;
+    status = session?.running
+      ? 'working'
+      : session?.starting
+        ? 'connecting'
+        : session && piAliveKeys.has(session.id)
+          ? 'connected'
+          : mockData.pi.connectionStatus === 'error' ? 'error' : 'disconnected';
   }
   const labels = {
     connected: '已连接',
@@ -925,10 +1018,115 @@ function renderRuntimeState() {
     connecting: '连接中',
     error: '连接异常',
     disconnected: '未连接',
-    mock: 'UI mock',
   };
   host.className = `external-runtime-state is-${status}`;
   host.textContent = labels[status] || labels.disconnected;
+}
+
+function isSessionConnected(kind, session) {
+  if (kind === 'codex') return mockData.codex.connectionStatus === 'connected';
+  if (kind === 'claude') return !!session && claudeAliveKeys.has(session.id);
+  if (kind === 'pi') return !!session && piAliveKeys.has(session.id);
+  return false;
+}
+
+/** 终止连接：codex 是共享进程，会断开本次应用内全部 Codex 会话；claude/pi 只影响这一个会话。 */
+async function terminateConnection(kind, session) {
+  const parts = [`确定要终止 ${agentMeta(kind).label} 连接吗？`];
+  if (session.running) parts.push('当前任务正在执行，操作会中断它。');
+  if (kind === 'codex') parts.push('Codex 使用共享进程，该操作会断开本次应用内全部 Codex 会话。');
+  const ok = await window.UIDialog?.confirm?.(parts.join(''), '终止连接', { danger: true, okText: '终止连接' });
+  if (!ok) return;
+  if (kind === 'codex') {
+    await deps.invoke('codex_disconnect').catch((error) => window.UIDialog?.toast?.(`终止失败：${error?.message || error}`));
+    codexReadyPromise = null;
+    codexReadyThreads.clear();
+    clearCodexRuntime(true);
+    mockData.codex.connectionStatus = 'disconnected';
+  } else if (kind === 'claude') {
+    await deps.invoke('claude_stop', { sessionKey: session.id }).catch((error) => window.UIDialog?.toast?.(`终止失败：${error?.message || error}`));
+    claudeAliveKeys.delete(session.id);
+    session.running = false;
+    delete session.starting;
+  } else if (kind === 'pi') {
+    await deps.invoke('pi_stop', { sessionKey: session.id }).catch((error) => window.UIDialog?.toast?.(`终止失败：${error?.message || error}`));
+    piAliveKeys.delete(session.id);
+    session.running = false;
+    delete session.starting;
+  }
+  persistMockData();
+  renderAgentWorkspace();
+}
+
+/** 刷新连接：断开旧进程后用同一个 resume/session id 立即重连，尽量续上对话。 */
+async function refreshConnection(kind, project, session) {
+  if (session.starting) return;
+  if (session.running) {
+    const ok = await window.UIDialog?.confirm?.('当前任务正在执行，刷新连接会中断它，是否继续？', '刷新连接', { danger: true, okText: '刷新连接' });
+    if (!ok) return;
+  }
+  if (kind === 'codex') {
+    await deps.invoke('codex_disconnect').catch(() => {});
+    codexReadyPromise = null;
+    codexReadyThreads.clear();
+    clearCodexRuntime(true);
+    mockData.codex.connectionStatus = 'connecting';
+    renderRuntimeState();
+    try {
+      // codexReadyThreads 已清空，该 thread 下次发送会自动走 thread/resume。
+      await ensureCodexConnection();
+    } catch (error) {
+      window.UIDialog?.toast?.(`重新连接失败：${error?.message || error}`);
+    }
+  } else if (kind === 'claude') {
+    await deps.invoke('claude_stop', { sessionKey: session.id }).catch(() => {});
+    claudeAliveKeys.delete(session.id);
+    session.running = false;
+    delete session.starting;
+    try {
+      await ensureClaudeSession(project, session);
+    } catch (error) {
+      window.UIDialog?.toast?.(`重新连接失败：${error?.message || error}`);
+    }
+  } else if (kind === 'pi') {
+    await deps.invoke('pi_stop', { sessionKey: session.id }).catch(() => {});
+    piAliveKeys.delete(session.id);
+    session.running = false;
+    delete session.starting;
+    try {
+      await ensurePiSession(project, session);
+    } catch (error) {
+      window.UIDialog?.toast?.(`重新连接失败：${error?.message || error}`);
+    }
+  }
+  persistMockData();
+  renderAgentWorkspace();
+}
+
+function renderConnectionMenu() {
+  const menu = $('#external-connection-menu');
+  if (!menu) return;
+  const found = ensureSelection();
+  if (!found) {
+    menu.innerHTML = '';
+    return;
+  }
+  const { project, session } = found;
+  const connected = isSessionConnected(activeKind, session);
+  menu.innerHTML = `
+    <button type="button" class="external-menu-option" data-connection-action="refresh"${session.starting ? ' disabled' : ''}>
+      <span><strong>${connected ? '刷新连接' : '建立连接'}</strong><small>${connected ? '断开后用同一会话重新连接' : '启动连接'}</small></span>
+    </button>
+    <button type="button" class="external-menu-option" data-connection-action="terminate"${connected ? '' : ' disabled'}>
+      <span><strong>终止连接</strong>${activeKind === 'codex' ? '<small>会影响全部 Codex 会话</small>' : ''}</span>
+    </button>`;
+  menu.querySelectorAll('[data-connection-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      closeExternalPopovers();
+      if (button.dataset.connectionAction === 'refresh') refreshConnection(activeKind, project, session);
+      else terminateConnection(activeKind, session);
+    });
+  });
 }
 
 function renderAgentWorkspace() {
@@ -962,15 +1160,14 @@ function renderAgentWorkspace() {
   const { session } = found;
 
   if ($('#external-main-session-title')) $('#external-main-session-title').textContent = session.title;
-  const context = activeKind === 'claude'
+  const perSessionContext = activeKind === 'claude' || activeKind === 'pi';
+  const context = perSessionContext
     ? Math.max(0, Math.min(100, Number(session.contextPct) || 0))
     : Math.max(0, Math.min(100, Number(agentState.context) || 0));
   const meter = $('#external-context-meter');
   if (meter) {
-    meter.hidden = activeKind === 'codex'
-      ? !agentState.contextKnown
-      : activeKind === 'claude' ? !session.contextKnown : true;
-    meter.title = activeKind === 'claude' && session.costUsd
+    meter.hidden = perSessionContext ? !session.contextKnown : !agentState.contextKnown;
+    meter.title = perSessionContext && session.costUsd
       ? `上下文用量 · 本会话累计 $${Number(session.costUsd).toFixed(4)}`
       : '上下文用量';
   }
@@ -979,31 +1176,6 @@ function renderAgentWorkspace() {
   renderMessages();
   renderComposerState();
   renderRightWorkspace();
-}
-
-function mockReviews() {
-  return [
-    {
-      path: 'ui/js/external-agent-mode.js', added: 186, removed: 24,
-      lines: [
-        { type: 'ctx', text: 'export function initExternalAgentMode(options) {' },
-        { type: 'del', text: '-  renderSettings();' },
-        { type: 'add', text: '+  bindWorkspaceEvents();' },
-        { type: 'add', text: '+  syncNavigation();' },
-        { type: 'ctx', text: '}' },
-      ],
-    },
-    {
-      path: 'ui/css/app.css', added: 142, removed: 0,
-      lines: [
-        { type: 'ctx', text: '/* External agent workspace */' },
-        { type: 'add', text: '+.external-agent-view {' },
-        { type: 'add', text: '+  min-width: 0;' },
-        { type: 'add', text: '+  background: var(--bg);' },
-        { type: 'add', text: '+}' },
-      ],
-    },
-  ];
 }
 
 function projectChildPath(root, name) {
@@ -1217,7 +1389,7 @@ function renderRightWorkspace() {
   renderExternalTabAddMenu();
 
   const selectedSession = findSession()?.session;
-  const reviewCount = isLiveKind() ? changesFromDiff(selectedSession?.realDiff).length : 2;
+  const reviewCount = changesFromDiff(selectedSession?.realDiff).length;
   tabs.innerHTML = workspaceTabs.map((kind) => {
     const meta = workspaceTabMeta(kind);
     const count = kind === 'review' && reviewCount
@@ -1275,12 +1447,10 @@ function renderWorkspaceContent(tab) {
         </div>
       </section>`;
   }
-  const reviews = isLiveKind()
-    ? (session.realDiff ? changesFromDiff(session.realDiff).map((item) => ({
-      ...item,
-      lines: item.diff.split(/\r?\n/).map((text) => ({ type: text.startsWith('+') && !text.startsWith('+++') ? 'add' : text.startsWith('-') && !text.startsWith('---') ? 'del' : 'ctx', text })),
-    })) : [])
-    : mockReviews();
+  const reviews = session.realDiff ? changesFromDiff(session.realDiff).map((item) => ({
+    ...item,
+    lines: item.diff.split(/\r?\n/).map((text) => ({ type: text.startsWith('+') && !text.startsWith('+++') ? 'add' : text.startsWith('-') && !text.startsWith('---') ? 'del' : 'ctx', text })),
+  })) : [];
   if (!reviews.length) return `<div class="rp-empty"><p class="rp-empty-title">暂无文件变更</p><p class="rp-empty-desc">${escapeHtml(agentMeta().label)} 修改文件后会在这里显示本次会话的 diff</p></div>`;
   const selected = currentAgentState().selectedReview || reviews[0].path;
   const review = reviews.find((item) => item.path === selected) || reviews[0];
@@ -1293,7 +1463,7 @@ function renderWorkspaceContent(tab) {
           <span>${escapeHtml(item.path)}</span><small>+${item.added} <i>-${item.removed}</i></small>
         </button>`).join('')}</div>
       <div class="external-diff">
-        <div class="external-file-preview-head"><span>${escapeHtml(review.path)}</span><small>${isLiveKind() && session.realDiff ? (activeKind === 'claude' ? '工具调用汇总' : 'Codex diff') : 'mock diff'}</small></div>
+        <div class="external-file-preview-head"><span>${escapeHtml(review.path)}</span><small>${activeKind === 'codex' ? 'Codex diff' : '工具调用汇总'}</small></div>
         <pre>${review.lines.map((line, index) => `<span class="diff-${line.type}"><b>${index + 1}</b>${escapeHtml(line.text)}</span>`).join('')}</pre>
       </div>
     </section>`;
@@ -1365,6 +1535,53 @@ async function addProject() {
   renderAgentWorkspace();
 }
 
+function hideExternalSessionMenu() {
+  const menu = $('#external-session-menu');
+  if (!menu) return;
+  menu.hidden = true;
+  menu.innerHTML = '';
+}
+
+/** 会话行右键菜单：终止连接。定位算法与 app.js::showContextMenu 一致（clientX/Y 夹在视口内）。 */
+function showExternalSessionMenu(event, session) {
+  const menu = $('#external-session-menu');
+  if (!menu) return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeExternalPopovers();
+  closeExternalTabAddMenu();
+  const connected = isSessionConnected(activeKind, session);
+  menu.innerHTML = '';
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'context-menu-item';
+  item.disabled = !connected;
+  const label = document.createElement('span');
+  label.textContent = '终止连接';
+  item.appendChild(label);
+  item.addEventListener('click', () => {
+    hideExternalSessionMenu();
+    terminateConnection(activeKind, session);
+  });
+  menu.appendChild(item);
+  menu.hidden = false;
+  const rect = menu.getBoundingClientRect();
+  const x = Math.min(event.clientX, window.innerWidth - rect.width - 8);
+  const y = Math.min(event.clientY, window.innerHeight - rect.height - 8);
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${Math.max(8, y)}px`;
+}
+
+function handleTreeContextMenu(event) {
+  const row = event.target.closest('.external-session-row');
+  if (!row) return;
+  const group = row.closest('[data-project-id]');
+  const project = currentAgentState().projects.find((item) => item.id === group?.dataset.projectId);
+  const session = project?.sessions.find((item) => item.id === row.dataset.sessionId);
+  if (!session) return;
+  showExternalSessionMenu(event, session);
+}
+
 async function handleTreeAction(event) {
   const button = event.target.closest('[data-external-action]');
   if (!button) return;
@@ -1398,6 +1615,10 @@ async function handleTreeAction(event) {
       claudeControl(session.id, 'rename_session', { title: session.title })
         .catch((error) => window.UIDialog?.toast?.(`Claude Code 会话重命名失败：${error?.message || error}`));
     }
+    if (activeKind === 'pi' && piAliveKeys.has(session.id)) {
+      piRequest(session.id, 'set_session_name', { name: session.title })
+        .catch((error) => window.UIDialog?.toast?.(`Pi 会话重命名失败：${error?.message || error}`));
+    }
   }
   if (action === 'delete-session' && session) {
     if (session.running) {
@@ -1418,6 +1639,11 @@ async function handleTreeAction(event) {
       // 只移除 WePChat 索引，不删 ~/.claude/projects 下的转录文件。
       await deps.invoke('claude_stop', { sessionKey: session.id }).catch(() => {});
       claudeAliveKeys.delete(session.id);
+    }
+    if (activeKind === 'pi') {
+      // 只移除 WePChat 索引，不删 ~/.pi/agent/sessions 下的 JSONL 文件。
+      await deps.invoke('pi_stop', { sessionKey: session.id }).catch(() => {});
+      piAliveKeys.delete(session.id);
     }
     project.sessions = project.sessions.filter((item) => item.id !== session.id);
   }
@@ -1680,28 +1906,59 @@ async function stopCodexTurn() {
   }
 }
 
+function codexTurnInput(content, attachments) {
+  return [
+    ...(content ? [{ type: 'text', text: content }] : []),
+    ...attachments.map((attachment) => ({ type: 'image', url: attachment.url })),
+  ];
+}
+
+async function steerCodexTurn(found, content, attachments) {
+  const { session } = found;
+  insertRunningUserMessage(session, { id: uid('eam'), role: 'user', content, attachments, time: nowLabel() });
+  session.updated = '刚刚';
+  renderMessages();
+  renderComposerState();
+  try {
+    await deps.invoke('codex_request', {
+      method: 'turn/steer',
+      params: {
+        threadId: session.threadId,
+        expectedTurnId: session.activeTurnId,
+        input: codexTurnInput(content, attachments),
+      },
+    });
+    persistMockData();
+  } catch (error) {
+    window.UIDialog?.toast?.(`发送失败：${error?.message || error}`);
+  }
+}
+
 async function sendCodexMessage() {
   const input = $('#external-composer-input');
   const agentState = mockData.codex;
   const selected = ensureSelection();
-  if (selected?.session?.running) {
-    await stopCodexTurn();
-    return;
-  }
   const content = input?.value.trim();
   if (!content && !composerAttachments.length) return;
   const found = selected;
   if (!found) return;
+  const attachments = composerAttachments;
+  input.value = '';
+  input.style.height = '';
+  composerAttachments = [];
+  renderComposerState();
+
+  if (found.session.running) {
+    await steerCodexTurn(found, content, attachments);
+    return;
+  }
+
   const { project, session } = found;
   session.messages ||= [];
-  const attachments = composerAttachments;
   session.messages.push({ id: uid('eam'), role: 'user', content, attachments, time: nowLabel() });
   const assistant = { id: uid('eam'), role: 'assistant', content: '', time: nowLabel(), pending: true, steps: [] };
   session.messages.push(assistant);
   session.updated = '刚刚';
-  input.value = '';
-  input.style.height = '';
-  composerAttachments = [];
   agentState.running = true;
   session.running = true;
   renderMessages();
@@ -1729,15 +1986,11 @@ async function sendCodexMessage() {
       codexReadyThreads.add(session.threadId);
     }
     const permission = permissionProfile();
-    const turnInput = [
-      ...(content ? [{ type: 'text', text: content }] : []),
-      ...attachments.map((attachment) => ({ type: 'image', url: attachment.url })),
-    ];
     const started = await deps.invoke('codex_request', {
       method: 'turn/start',
       params: {
         threadId: session.threadId,
-        input: turnInput,
+        input: codexTurnInput(content, attachments),
         cwd: project.path,
         model: agentState.model,
         effort: agentState.effort || undefined,
@@ -1781,7 +2034,15 @@ async function respondCodexApproval(messageId, decision) {
 function sendMessage() {
   if (activeKind === 'codex') return sendCodexMessage();
   if (activeKind === 'claude') return sendClaudeMessage();
-  return sendMockMessage();
+  if (activeKind === 'pi') return sendPiMessage();
+  return undefined;
+}
+
+function stopMessage() {
+  if (activeKind === 'codex') return stopCodexTurn();
+  if (activeKind === 'claude') return stopClaudeTurn();
+  if (activeKind === 'pi') return stopPiTurn();
+  return undefined;
 }
 
 /* ---------- Claude Code（stream-json，每会话一个进程） ---------- */
@@ -2193,26 +2454,59 @@ async function stopClaudeTurn() {
   }
 }
 
+function claudeContentBlocks(content, attachments) {
+  return [
+    ...(content ? [{ type: 'text', text: content }] : []),
+    ...attachments.map((attachment) => claudeImageBlock(attachment.url)).filter(Boolean),
+  ];
+}
+
+async function steerClaudeTurn(found, content, attachments) {
+  const { session } = found;
+  insertRunningUserMessage(session, { id: uid('eam'), role: 'user', content, attachments, time: nowLabel() });
+  session.updated = '刚刚';
+  renderMessages();
+  renderComposerState();
+  try {
+    // priority:'next' 排队追加到命令队列（SDKUserMessage.priority），执行完当前步骤后处理。
+    await deps.invoke('claude_send', {
+      sessionKey: session.id,
+      message: {
+        type: 'user',
+        message: { role: 'user', content: claudeContentBlocks(content, attachments) },
+        parent_tool_use_id: null,
+        priority: 'next',
+      },
+    });
+    persistMockData();
+  } catch (error) {
+    window.UIDialog?.toast?.(`发送失败：${error?.message || error}`);
+  }
+}
+
 async function sendClaudeMessage() {
   const input = $('#external-composer-input');
   const selected = ensureSelection();
-  if (selected?.session?.running) {
-    await stopClaudeTurn();
-    return;
-  }
   const content = input?.value.trim();
   if (!content && !composerAttachments.length) return;
   if (!selected) return;
+  const attachments = composerAttachments;
+  input.value = '';
+  input.style.height = '';
+  composerAttachments = [];
+  renderComposerState();
+
+  if (selected.session.running) {
+    await steerClaudeTurn(selected, content, attachments);
+    return;
+  }
+
   const { project, session } = selected;
   session.messages ||= [];
-  const attachments = composerAttachments;
   session.messages.push({ id: uid('eam'), role: 'user', content, attachments, time: nowLabel() });
   const assistant = { id: uid('eam'), role: 'assistant', content: '', time: nowLabel(), pending: true, steps: [] };
   session.messages.push(assistant);
   session.updated = '刚刚';
-  input.value = '';
-  input.style.height = '';
-  composerAttachments = [];
   mockData.claude.running = true;
   session.running = true;
   renderMessages();
@@ -2225,13 +2519,9 @@ async function sendClaudeMessage() {
       session.title = (content || attachments[0]?.name || '新会话').slice(0, 28);
       claudeControl(session.id, 'rename_session', { title: session.title }).catch(() => {});
     }
-    const blocks = [
-      ...(content ? [{ type: 'text', text: content }] : []),
-      ...attachments.map((attachment) => claudeImageBlock(attachment.url)).filter(Boolean),
-    ];
     await deps.invoke('claude_send', {
       sessionKey: session.id,
-      message: { type: 'user', message: { role: 'user', content: blocks }, parent_tool_use_id: null },
+      message: { type: 'user', message: { role: 'user', content: claudeContentBlocks(content, attachments) }, parent_tool_use_id: null },
     });
     persistMockData();
     renderAgentWorkspace();
@@ -2245,49 +2535,496 @@ async function sendClaudeMessage() {
   }
 }
 
-function sendMockMessage() {
-  const input = $('#external-composer-input');
-  const agentState = currentAgentState();
-  if (agentState.running) {
-    clearTimeout(responseTimer);
-    responseTimer = 0;
-    agentState.running = false;
-    renderComposerState();
+/* ---------- Pi（--mode rpc JSONL，每会话一个进程） ---------- */
+
+const PI_TOOL_LABELS = {
+  bash: '运行命令',
+  read: '读取文件',
+  edit: '修改文件',
+  write: '修改文件',
+  glob: '检索文件',
+  grep: '检索内容',
+  find: '检索文件',
+  ls: '读取目录',
+  fetch: '访问网络',
+  web_search: '搜索网页',
+};
+
+function piRequest(sessionKey, command, params = {}) {
+  return deps.invoke('pi_request', { sessionKey, command, params });
+}
+
+function findPiSessionByKey(sessionKey) {
+  for (const project of mockData.pi.projects) {
+    const session = project.sessions.find((item) => item.id === sessionKey);
+    if (session) return { project, session };
+  }
+  return null;
+}
+
+function piAssistantMessage(session) {
+  return [...(session.messages || [])].reverse().find((message) => message.role === 'assistant');
+}
+
+function ensurePiAssistant(session) {
+  const last = piAssistantMessage(session);
+  if (last && (last.pending || session.running)) return last;
+  const created = { id: uid('eam'), role: 'assistant', content: '', time: nowLabel(), pending: true, steps: [] };
+  (session.messages ||= []).push(created);
+  return created;
+}
+
+function updatePiView(found, immediate = false) {
+  const render = () => {
+    piRenderTimer = 0;
+    persistMockData();
+    if (activeKind === 'pi' && found?.session?.id === mockData.pi.selectedSessionId) {
+      renderAgentWorkspace();
+    }
+  };
+  if (immediate) {
+    clearTimeout(piRenderTimer);
+    render();
     return;
   }
-  const content = input?.value.trim();
-  if (!content) return;
+  // 流式增量按 40ms 合并渲染，避免逐 token 全量重绘（tool_execution_update 亦复用此节流）。
+  if (!piRenderTimer) piRenderTimer = window.setTimeout(render, 40);
+}
+
+function clearPiRuntime(markDisconnected = false) {
+  mockData.pi.running = false;
+  mockData.pi.projects.flatMap((project) => project.sessions).forEach((session) => {
+    if (markDisconnected && session.running) {
+      const assistant = piAssistantMessage(session);
+      if (assistant) {
+        assistant.pending = false;
+        assistant.content ||= 'Pi 连接已断开，请重新发送任务。';
+      }
+    }
+    session.running = false;
+    delete session.starting;
+  });
+}
+
+function piToolStep(event) {
+  const args = event.args || {};
+  const detail = args.command || args.path || args.file_path || args.pattern || args.url || args.query || '';
+  return {
+    id: event.toolCallId,
+    title: PI_TOOL_LABELS[event.toolName] || event.toolName || '执行工具',
+    detail: String(detail).slice(0, 200),
+    status: 'running',
+  };
+}
+
+/** M1 口径：从 edit / write 工具的 args 合成 diff，喂现有审阅 UI（同 claude）。 */
+function registerPiChange(found, assistant, toolName, args = {}) {
+  const rawPath = args.path || args.file_path || '';
+  if (!rawPath) return;
+  const path = projectRelativePath(found.project.path, rawPath) || rawPath;
+  const removed = [];
+  const added = [];
+  if (toolName === 'edit') {
+    // 当前 schema 是 edits: [{oldText, newText}]，老会话可能是顶层 oldText/newText。
+    const edits = Array.isArray(args.edits) ? args.edits : [args];
+    edits.forEach((edit) => {
+      if (edit?.oldText) removed.push(...String(edit.oldText).split(/\r?\n/));
+      if (edit?.newText) added.push(...String(edit.newText).split(/\r?\n/));
+    });
+  } else if (toolName === 'write') {
+    added.push(...String(args.content || args.text || '').split(/\r?\n/));
+  } else {
+    return;
+  }
+  if (!removed.length && !added.length) return;
+  const body = [...removed.map((line) => `-${line}`), ...added.map((line) => `+${line}`)].join('\n');
+  const { session } = found;
+  session.piDiffByPath ||= {};
+  session.piDiffByPath[path] = `${session.piDiffByPath[path] || ''}${body}\n`;
+  session.realDiff = Object.entries(session.piDiffByPath)
+    .map(([p, b]) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n${b}`)
+    .join('');
+  assistant.changes = changesFromDiff(session.realDiff);
+}
+
+function handlePiAgentEvent(found, event = {}) {
+  const { session } = found;
+  const type = event.type;
+  if (type === 'agent_start') {
+    session.running = true;
+    mockData.pi.running = true;
+    ensurePiAssistant(session);
+    updatePiView(found, true);
+  } else if (type === 'message_update') {
+    const delta = event.assistantMessageEvent || {};
+    if (delta.type === 'text_delta') {
+      const assistant = ensurePiAssistant(session);
+      if (assistant.needsSeparator && assistant.content) assistant.content += '\n\n';
+      assistant.needsSeparator = false;
+      assistant.content += delta.delta || '';
+      assistant.pending = false;
+      updatePiView(found);
+    }
+    // thinking_delta / toolcall_* 不渲染（思考区留作增强，工具卡走 tool_execution_*）。
+  } else if (type === 'tool_execution_start') {
+    const assistant = ensurePiAssistant(session);
+    assistant.steps ||= [];
+    if (!assistant.steps.some((step) => step.id === event.toolCallId)) assistant.steps.push(piToolStep(event));
+    registerPiChange(found, assistant, event.toolName, event.args);
+    assistant.needsSeparator = true;
+    updatePiView(found);
+  } else if (type === 'tool_execution_end') {
+    const assistant = piAssistantMessage(session);
+    const step = assistant?.steps?.find((item) => item.id === event.toolCallId);
+    if (step && step.status === 'running') step.status = event.isError ? 'failed' : 'done';
+    updatePiView(found);
+  } else if (type === 'auto_retry_end') {
+    if (event.success === false && event.finalError) {
+      const assistant = ensurePiAssistant(session);
+      assistant.pending = false;
+      assistant.content = assistant.content
+        ? `${assistant.content}\n\nPi 错误：${event.finalError}`
+        : `Pi 错误：${event.finalError}`;
+      updatePiView(found, true);
+    }
+  } else if (type === 'agent_end') {
+    session.running = false;
+    mockData.pi.running = false;
+    const assistant = piAssistantMessage(session);
+    if (assistant) {
+      assistant.pending = false;
+      assistant.needsSeparator = false;
+      const generated = Array.isArray(event.messages) ? event.messages.filter((m) => m?.role === 'assistant') : [];
+      if (!assistant.content) {
+        // agent_end 带全部生成消息，兜底补全正文。
+        assistant.content = generated
+          .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+          .filter((block) => block?.type === 'text')
+          .map((block) => block.text)
+          .filter(Boolean)
+          .join('\n\n') || '已完成本次任务。';
+      }
+      const errorMessage = generated.map((m) => m.errorMessage).filter(Boolean).pop();
+      if (errorMessage && !assistant.content.includes(errorMessage)) {
+        assistant.content += `\n\nPi 错误：${errorMessage}`;
+      }
+      (assistant.steps || []).forEach((step) => {
+        if (step.status === 'running') step.status = 'done';
+      });
+      if (assistant.uiRequest && !assistant.uiRequest.resolved) assistant.uiRequest.resolved = true;
+    }
+    session.updated = '刚刚';
+    updatePiView(found, true);
+    refreshPiStats(found);
+  }
+  // 其余事件（turn_* / message_start/end / queue_update / compaction_* 等）忽略。
+}
+
+/** extension UI 子协议（pi 版“审批”）：select/confirm 用消息内卡片，input/editor 走对话框。 */
+function handlePiUiRequest(found, request = {}) {
+  const method = request.method;
+  if (method === 'notify') {
+    window.UIDialog?.toast?.(String(request.message || ''));
+    return;
+  }
+  if (method === 'select' || method === 'confirm') {
+    const assistant = ensurePiAssistant(found.session);
+    assistant.uiRequest = {
+      id: request.id,
+      method,
+      title: request.title || (method === 'confirm' ? '确认操作' : '选择一项'),
+      message: request.message || '',
+      options: Array.isArray(request.options) ? request.options.map(String) : [],
+      resolved: false,
+    };
+    updatePiView(found, true);
+    return;
+  }
+  if (method === 'input' || method === 'editor') {
+    Promise.resolve(window.UIDialog?.prompt?.(request.title || '输入内容', request.prefill || '', request.placeholder || ''))
+      .then((value) => deps.invoke('pi_ui_respond', {
+        sessionKey: found.session.id,
+        requestId: request.id,
+        payload: value == null ? { cancelled: true } : { value: String(value) },
+      }))
+      .catch(() => {});
+  }
+  // 其余通知类（setStatus/setWidget/setTitle/set_editor_text）忽略。
+}
+
+async function respondPiUiRequest(messageId, button) {
   const found = ensureSelection();
+  const message = found?.session?.messages?.find((item) => item.id === messageId);
+  if (!message?.uiRequest || message.uiRequest.resolved) return;
+  let payload;
+  if (button.hasAttribute('data-pi-ui-cancel')) payload = { cancelled: true };
+  else if (button.hasAttribute('data-pi-ui-confirm')) payload = { confirmed: true };
+  else payload = { value: button.dataset.piUiOption || '' };
+  try {
+    await deps.invoke('pi_ui_respond', {
+      sessionKey: found.session.id,
+      requestId: message.uiRequest.id,
+      payload,
+    });
+    message.uiRequest.resolved = true;
+    updatePiView(found, true);
+  } catch (error) {
+    window.UIDialog?.toast?.(`响应失败：${error?.message || error}`);
+  }
+}
+
+async function refreshPiStats(found) {
+  try {
+    const stats = await piRequest(found.session.id, 'get_session_stats', {});
+    const usage = stats?.contextUsage;
+    if (usage && usage.percent != null) {
+      found.session.contextPct = Math.min(100, Math.round(Number(usage.percent) || 0));
+      found.session.contextKnown = true;
+    }
+    if (typeof stats?.cost === 'number') found.session.costUsd = stats.cost; // 会话累计值，直接赋值
+    updatePiView(found, true);
+  } catch {
+    // 用量拉取失败不影响主流程。
+  }
+}
+
+function handlePiEvent(payload = {}) {
+  const found = findPiSessionByKey(payload.sessionKey);
+  if (payload.kind === 'status') {
+    if (payload.status === 'connected') {
+      piAliveKeys.add(payload.sessionKey);
+      mockData.pi.connectionStatus = 'connected';
+    } else {
+      piAliveKeys.delete(payload.sessionKey);
+      if (found?.session) {
+        if (found.session.running) {
+          const assistant = piAssistantMessage(found.session);
+          if (assistant) {
+            assistant.pending = false;
+            assistant.content ||= 'Pi 连接已断开，请重新发送任务。';
+          }
+        }
+        found.session.running = false;
+        delete found.session.starting;
+      }
+    }
+    persistMockData();
+    if (activeKind === 'pi') renderAgentWorkspace();
+    return;
+  }
   if (!found) return;
-  found.session.messages ||= [];
-  found.session.messages.push({ id: uid('eam'), role: 'user', content, time: '刚刚' });
-  found.session.updated = '刚刚';
-  input.value = '';
-  input.style.height = '';
-  agentState.running = true;
+  if (payload.kind === 'uiRequest') return handlePiUiRequest(found, payload.message);
+  if (payload.kind === 'event') return handlePiAgentEvent(found, payload.message);
+}
+
+function applyPiState(session, state = {}) {
+  if (state.sessionFile) session.piSessionFile = state.sessionFile;
+  if (state.sessionId) session.piSessionId = state.sessionId;
+  if (state.model) {
+    mockData.pi.currentModel = state.model.name || state.model.id || '';
+    if (!mockData.pi.model) mockData.pi.model = piModelKey(state.model);
+  }
+  if (state.thinkingLevel && !mockData.pi.thinkingLevel) mockData.pi.thinkingLevel = state.thinkingLevel;
+}
+
+async function loadPiModels(session) {
+  try {
+    const data = await piRequest(session.id, 'get_available_models', {});
+    const models = Array.isArray(data?.models) ? data.models : [];
+    if (models.length) {
+      piModels = models
+        .map((item) => ({
+          provider: item?.provider || '',
+          id: item?.id || '',
+          name: item?.name || item?.id || '',
+          reasoning: !!item?.reasoning,
+          input: Array.isArray(item?.input) ? item.input : ['text'],
+        }))
+        .filter((item) => item.id);
+      if (mockData.pi.model && !piModels.some((item) => piModelKey(item) === mockData.pi.model)) {
+        mockData.pi.model = '';
+      }
+    }
+  } catch {
+    // 模型菜单保持禁用，不影响发送。
+  }
+}
+
+/** resume 后本地无历史时用 get_messages 回放（历史插到刚输入的这轮之前）。 */
+async function replayPiMessages(found) {
+  try {
+    const data = await piRequest(found.session.id, 'get_messages', {});
+    const restored = [];
+    (Array.isArray(data?.messages) ? data.messages : []).forEach((entry) => {
+      if (entry?.role === 'user') {
+        const text = typeof entry.content === 'string'
+          ? entry.content
+          : (Array.isArray(entry.content) ? entry.content : []).filter((block) => block?.type === 'text').map((block) => block.text).join('\n');
+        if (String(text).trim()) restored.push({ id: uid('eam'), role: 'user', content: text, time: '' });
+      } else if (entry?.role === 'assistant') {
+        const blocks = Array.isArray(entry.content) ? entry.content : [];
+        restored.push({
+          id: uid('eam'),
+          role: 'assistant',
+          content: blocks.filter((block) => block?.type === 'text').map((block) => block.text).filter(Boolean).join('\n\n'),
+          time: '',
+          steps: blocks.filter((block) => block?.type === 'toolCall').map((block) => ({
+            id: block.id,
+            title: PI_TOOL_LABELS[block.name] || block.name || '执行工具',
+            detail: String(block.arguments?.command || block.arguments?.path || '').slice(0, 200),
+            status: 'done',
+          })),
+        });
+      } else if (entry?.role === 'toolResult') {
+        const last = [...restored].reverse().find((item) => item.role === 'assistant');
+        const step = last?.steps?.find((item) => item.id === entry.toolCallId);
+        if (step && entry.isError) step.status = 'failed';
+      }
+    });
+    if (restored.length) {
+      found.session.messages = [...restored, ...(found.session.messages || [])];
+      updatePiView(found, true);
+    }
+  } catch {
+    // 回放失败不阻塞发送。
+  }
+}
+
+async function ensurePiSession(project, session) {
+  if (piAliveKeys.has(session.id)) return undefined;
+  if (piStartPromises.has(session.id)) return piStartPromises.get(session.id);
+  const promise = (async () => {
+    mockData.pi.connectionStatus = 'connecting';
+    session.starting = true;
+    renderRuntimeState();
+    try {
+      const started = await deps.invoke('pi_start', {
+        sessionKey: session.id,
+        cwd: project.path,
+        sessionFile: session.piSessionFile || null,
+        name: session.title && session.title !== '新会话' ? session.title : null,
+      });
+      piAliveKeys.add(session.id);
+      mockData.pi.connectionStatus = 'connected';
+      const state = started?.state || {};
+      applyPiState(session, state);
+      await loadPiModels(session);
+      // 用户先前选过的模型/思考档同步到新进程（进程默认跟随用户 pi 配置）。
+      const stateKey = state.model ? piModelKey(state.model) : '';
+      if (mockData.pi.model && stateKey && mockData.pi.model !== stateKey) {
+        const target = selectedPiModel();
+        if (target) {
+          const data = await piRequest(session.id, 'set_model', { provider: target.provider, modelId: target.id }).catch(() => null);
+          if (data) mockData.pi.currentModel = data.name || data.id || mockData.pi.currentModel;
+        } else {
+          mockData.pi.model = stateKey;
+        }
+      }
+      if (mockData.pi.thinkingLevel && mockData.pi.thinkingLevel !== state.thinkingLevel) {
+        piRequest(session.id, 'set_thinking_level', { level: mockData.pi.thinkingLevel }).catch(() => {});
+      }
+      // resume：本地只有刚输入的这一轮时回放历史。
+      const local = session.messages || [];
+      if ((Number(state.messageCount) || 0) > 0 && local.filter((item) => item.role === 'user').length <= 1 && local.length <= 2) {
+        await replayPiMessages({ project, session });
+      }
+    } catch (error) {
+      mockData.pi.connectionStatus = 'error';
+      throw error;
+    } finally {
+      delete session.starting;
+      piStartPromises.delete(session.id);
+      persistMockData();
+      if (activeKind === 'pi') renderAgentWorkspace();
+    }
+  })();
+  piStartPromises.set(session.id, promise);
+  return promise;
+}
+
+function piImageContent(dataUrl) {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(String(dataUrl || ''));
+  if (!match) return null;
+  return { type: 'image', data: match[2], mimeType: match[1] };
+}
+
+async function stopPiTurn() {
+  const found = ensureSelection();
+  if (!found?.session?.running) return;
+  try {
+    await piRequest(found.session.id, 'abort', {});
+  } catch (error) {
+    window.UIDialog?.toast?.(`停止失败：${error?.message || error}`);
+  }
+}
+
+function piPromptParams(content, attachments) {
+  const images = attachments.map((attachment) => piImageContent(attachment.url)).filter(Boolean);
+  const params = { message: content || '请查看附带的图片。' };
+  if (images.length) params.images = images;
+  return params;
+}
+
+async function steerPiTurn(found, content, attachments) {
+  const { session } = found;
+  insertRunningUserMessage(session, { id: uid('eam'), role: 'user', content, attachments, time: nowLabel() });
+  session.updated = '刚刚';
   renderMessages();
   renderComposerState();
-  const kind = activeKind;
-  const sessionId = found.session.id;
-  responseTimer = window.setTimeout(() => {
-    responseTimer = 0;
-    const stateForAgent = mockData[kind];
-    const target = stateForAgent.projects.flatMap((project) => project.sessions).find((session) => session.id === sessionId);
-    if (!target) return;
-    target.messages.push({
-      id: uid('eam'),
-      role: 'assistant',
-      content: '这是界面阶段的 mock 响应。消息、工具状态与工作区联动已经就位，真实执行会在 Codex 连接层接入后替换这里。',
-      time: '刚刚',
-      steps: [{ title: '等待真实连接', detail: '当前未启动 CLI 或 RPC 进程', status: 'done' }],
-    });
-    stateForAgent.running = false;
+  try {
+    await piRequest(session.id, 'steer', piPromptParams(content, attachments));
     persistMockData();
-    if (activeKind === kind && currentAgentState().selectedSessionId === sessionId) {
-      renderMessages();
-      renderComposerState();
+  } catch (error) {
+    window.UIDialog?.toast?.(`发送失败：${error?.message || error}`);
+  }
+}
+
+async function sendPiMessage() {
+  const input = $('#external-composer-input');
+  const selected = ensureSelection();
+  const content = input?.value.trim();
+  if (!content && !composerAttachments.length) return;
+  if (!selected) return;
+  const attachments = composerAttachments;
+  input.value = '';
+  input.style.height = '';
+  composerAttachments = [];
+  renderComposerState();
+
+  if (selected.session.running) {
+    await steerPiTurn(selected, content, attachments);
+    return;
+  }
+
+  const { project, session } = selected;
+  session.messages ||= [];
+  session.messages.push({ id: uid('eam'), role: 'user', content, attachments, time: nowLabel() });
+  const assistant = { id: uid('eam'), role: 'assistant', content: '', time: nowLabel(), pending: true, steps: [] };
+  session.messages.push(assistant);
+  session.updated = '刚刚';
+  mockData.pi.running = true;
+  session.running = true;
+  renderMessages();
+  renderComposerState();
+  renderRuntimeState();
+
+  try {
+    await ensurePiSession(project, session);
+    if (!session.title || session.title === '新会话') {
+      session.title = (content || attachments[0]?.name || '新会话').slice(0, 28);
+      piRequest(session.id, 'set_session_name', { name: session.title }).catch(() => {});
     }
-  }, 850);
+    await piRequest(session.id, 'prompt', piPromptParams(content, attachments));
+    persistMockData();
+    renderAgentWorkspace();
+  } catch (error) {
+    assistant.pending = false;
+    assistant.content = `无法启动 Pi：${error?.message || error}`;
+    mockData.pi.running = false;
+    session.running = false;
+    persistMockData();
+    renderAgentWorkspace();
+  }
 }
 
 function bind() {
@@ -2305,10 +3042,32 @@ function bind() {
   $all('[data-external-detect]').forEach((button) => {
     button.addEventListener('click', () => detect(button.dataset.externalDetect));
   });
+  $all('[data-external-browse]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const kind = button.dataset.externalBrowse;
+      const agent = agentMeta(kind);
+      const input = $(`#external-${kind}-path`);
+      try {
+        const picked = await deps.invoke('pick_file_path', {
+          title: `选择 ${agent?.label || kind} CLI`,
+          defaultPath: input?.value || null,
+          filters: [
+            { name: '可执行文件', extensions: ['exe', 'cmd', 'bat', 'ps1', 'com'] },
+            { name: '全部文件', extensions: ['*'] },
+          ],
+        });
+        if (picked && input) input.value = picked;
+      } catch (error) {
+        window.UIDialog?.toast?.(error?.message || String(error));
+      }
+    });
+  });
   $('#btn-save-external')?.addEventListener('click', saveSettings);
   $('#external-add-project')?.addEventListener('click', addProject);
   $('#external-project-search')?.addEventListener('input', renderProjectTree);
   $('#external-project-tree')?.addEventListener('click', handleTreeAction);
+  $('#external-project-tree')?.addEventListener('contextmenu', handleTreeContextMenu);
+  $('#external-project-tree')?.addEventListener('scroll', hideExternalSessionMenu);
   $('#external-toggle-workspace')?.addEventListener('click', () => deps.setRightOpen?.(!deps.getState().rightOpen));
   $('#external-tab-add')?.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -2319,6 +3078,7 @@ function bind() {
     $('#external-tab-add')?.setAttribute('aria-expanded', open ? 'true' : 'false');
   });
   $('#external-send')?.addEventListener('click', sendMessage);
+  $('#external-stop')?.addEventListener('click', stopMessage);
   $('#external-composer-input')?.addEventListener('input', (event) => {
     event.target.style.height = '';
     event.target.style.height = `${Math.min(150, event.target.scrollHeight)}px`;
@@ -2336,6 +3096,12 @@ function bind() {
       const approval = decision.closest('[data-approval-message]');
       if (activeKind === 'claude') respondClaudeApproval(approval?.dataset.approvalMessage, decision.dataset.codexDecision);
       else respondCodexApproval(approval?.dataset.approvalMessage, decision.dataset.codexDecision);
+      return;
+    }
+    const piUi = event.target.closest('[data-pi-ui-option], [data-pi-ui-confirm], [data-pi-ui-cancel]');
+    if (piUi) {
+      const wrap = piUi.closest('[data-ui-request-message]');
+      respondPiUiRequest(wrap?.dataset.uiRequestMessage, piUi);
       return;
     }
     const starter = event.target.closest('[data-external-starter]');
@@ -2373,9 +3139,15 @@ function bind() {
     toggleExternalPopover('external-model-menu', 'external-model-toggle');
   });
   $('#external-open-project')?.addEventListener('click', showOpenProjectMenu);
+  $('#external-runtime-state')?.addEventListener('click', () => {
+    if (!ensureSelection()) return;
+    renderConnectionMenu();
+    toggleExternalPopover('external-connection-menu', 'external-runtime-state');
+  });
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.external-popover-wrap, .external-open-wrap')) closeExternalPopovers();
     if (!event.target.closest('#external-tab-add-wrap')) closeExternalTabAddMenu();
+    if (!event.target.closest('#external-session-menu')) hideExternalSessionMenu();
     const remove = event.target.closest('[data-external-remove-attachment]');
     if (remove) {
       composerAttachments = composerAttachments.filter((item) => item.id !== remove.dataset.externalRemoveAttachment);
@@ -2407,6 +3179,19 @@ function bind() {
           claudeControl(session.id, 'set_model', { model: mockData.claude.model })
             .catch((error) => window.UIDialog?.toast?.(`切换模型失败：${error?.message || error}`));
         }
+      } else if (activeKind === 'pi') {
+        mockData.pi.model = model.dataset.externalModel;
+        const target = selectedPiModel();
+        const session = findSession()?.session;
+        if (target && session && piAliveKeys.has(session.id)) {
+          piRequest(session.id, 'set_model', { provider: target.provider, modelId: target.id })
+            .then((data) => {
+              if (data) mockData.pi.currentModel = data.name || data.id || mockData.pi.currentModel;
+              persistMockData();
+              renderComposerState();
+            })
+            .catch((error) => window.UIDialog?.toast?.(`切换模型失败：${error?.message || error}`));
+        }
       } else {
         mockData.codex.model = model.dataset.externalModel;
         const selected = selectedCodexModel();
@@ -2418,8 +3203,18 @@ function bind() {
     }
     const effort = event.target.closest('[data-external-effort]');
     if (effort) {
-      // claude 的推理档在下一次进程启动时经 --effort 生效（运行中切换见 M3 实测清单）。
-      currentAgentState().effort = effort.dataset.externalEffort;
+      if (activeKind === 'pi') {
+        // pi 的思考档是会话级 thinkingLevel，连接中随时切换。
+        mockData.pi.thinkingLevel = effort.dataset.externalEffort;
+        const session = findSession()?.session;
+        if (session && piAliveKeys.has(session.id)) {
+          piRequest(session.id, 'set_thinking_level', { level: mockData.pi.thinkingLevel })
+            .catch((error) => window.UIDialog?.toast?.(`切换思考深度失败：${error?.message || error}`));
+        }
+      } else {
+        // claude 的推理档在下一次进程启动时经 --effort 生效（运行中切换见 M3 实测清单）。
+        currentAgentState().effort = effort.dataset.externalEffort;
+      }
       persistMockData();
       renderComposerState();
       return;
@@ -2452,6 +3247,11 @@ export function initExternalAgentMode(options) {
       .then((unlisten) => { claudeUnlisten = unlisten; })
       .catch((error) => console.warn('listen claude agent', error));
   }
+  if (eventApi?.listen && !piUnlisten) {
+    eventApi.listen('pi-agent', (event) => handlePiEvent(event?.payload || {}))
+      .then((unlisten) => { piUnlisten = unlisten; })
+      .catch((error) => console.warn('listen pi agent', error));
+  }
   if (eventApi?.listen && !powerShellUnlisten) {
     eventApi.listen('powershell-terminal', (event) => handlePowerShellEvent(event?.payload || {}))
       .then((unlisten) => { powerShellUnlisten = unlisten; })
@@ -2471,6 +3271,17 @@ export function initExternalAgentMode(options) {
       if (!alive.has(session.id)) session.running = false;
     });
     mockData.claude.running = mockData.claude.projects.some((project) => project.sessions.some((session) => session.running));
+    persistMockData();
+  }).catch(() => {});
+  deps.invoke('pi_status').then((status) => {
+    const alive = new Set(status?.sessions || []);
+    piAliveKeys.clear();
+    alive.forEach((key) => piAliveKeys.add(key));
+    mockData.pi.projects.flatMap((project) => project.sessions).forEach((session) => {
+      delete session.starting;
+      if (!alive.has(session.id)) session.running = false;
+    });
+    mockData.pi.running = mockData.pi.projects.some((project) => project.sessions.some((session) => session.running));
     persistMockData();
   }).catch(() => {});
   window.ExternalAgentMode = {
@@ -2494,9 +3305,6 @@ function enter(kind) {
 }
 
 function exit() {
-  clearTimeout(responseTimer);
-  responseTimer = 0;
-  if (activeKind !== 'codex' && currentAgentState()) currentAgentState().running = false;
   const pane = $('#right-pane');
   $('#app-body')?.classList.remove('is-external-agent-mode');
   pane?.classList.remove('is-external-workspace');

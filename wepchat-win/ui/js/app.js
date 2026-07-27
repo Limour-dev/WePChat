@@ -2908,6 +2908,7 @@ function bindEvents() {
   });
 
   bindAppearanceEvents({ persistSettings });
+  bindSettingsExtras();
 
   $('#btn-new-chat')?.addEventListener('click', () => createNewChat());
   $('#btn-new-chat-top')?.addEventListener('click', () => createNewChat());
@@ -3107,8 +3108,8 @@ function renderBackendState() {
     defaultNote.textContent = `默认路径：${state.defaultWorkspaceRoot}`;
   }
   if (about && state.meta) {
-    const version = state.meta.version ? ` v${state.meta.version}` : '';
-    about.textContent = `${state.meta.name || 'WePChat'}${version} · Windows`;
+    const version = state.meta.version ? `v${state.meta.version}` : '';
+    about.textContent = [version, 'Windows 桌面版'].filter(Boolean).join(' · ');
   }
   const agentBtn = $('#agent-enabled');
   if (agentBtn) {
@@ -3121,6 +3122,8 @@ function renderBackendState() {
   const calls = $('#agent-max-calls');
   if (calls) calls.value = String(settings.maxToolCalls ?? 24);
   renderToolPermissions();
+  renderGeneralSettings();
+  renderChatDefaults();
   renderThemeUI();
   renderProviders();
   renderSessions();
@@ -3183,6 +3186,465 @@ async function saveAgentSettings() {
     if (status) status.textContent = '保存失败';
     UIDialog.toast(err?.message || String(err));
   }
+}
+
+/* ── 常规 / 对话 / 关于（settings-revamp）── */
+
+const REPO_URL = 'https://github.com/WEP-56/WePChat';
+const REPO_ISSUES_URL = REPO_URL + '/issues/new';
+const REPO_RELEASES_URL = REPO_URL + '/releases';
+
+const settingsStatusTimers = new WeakMap();
+function flashSettingsStatus(el, text) {
+  if (!el) return;
+  el.textContent = text;
+  clearTimeout(settingsStatusTimers.get(el));
+  settingsStatusTimers.set(el, setTimeout(() => { el.textContent = ''; }, 2600));
+}
+
+function openExternalUrl(url) {
+  const opener = window.__TAURI__?.opener;
+  if (opener?.openUrl) {
+    opener.openUrl(url).catch((err) => UIDialog.toast(err?.message || String(err)));
+  } else {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+function openLocalPath(path) {
+  const value = (path || '').trim();
+  if (!value) return;
+  invoke('open_path_in_explorer', { path: value }).catch((err) =>
+    UIDialog.toast(err?.message || String(err))
+  );
+}
+
+/* ---- 常规页 ---- */
+
+function normalizedCloseBehavior() {
+  const value = state.settings?.closeBehavior;
+  return ['minimize', 'tray', 'exit'].includes(value) ? value : 'ask';
+}
+
+function renderGeneralSettings() {
+  const settings = state.settings || {};
+  const behavior = normalizedCloseBehavior();
+  $all('#close-behavior-seg .seg-btn').forEach((btn) => {
+    btn.classList.toggle('is-on', btn.dataset.mode === behavior);
+  });
+  const closeSub = $('#general-close-sub');
+  if (closeSub) {
+    closeSub.textContent = {
+      ask: '尚未选择：点击关闭按钮时会询问一次',
+      minimize: '关闭按钮 = 最小化到任务栏',
+      tray: '关闭按钮 = 隐藏到系统托盘，后台继续运行',
+      exit: '关闭按钮 = 退出应用',
+    }[behavior];
+  }
+  const trayForced = behavior === 'tray';
+  const trayOn = trayForced || settings.trayEnabled === true;
+  const trayBtn = $('#general-tray');
+  if (trayBtn) {
+    trayBtn.classList.toggle('on', trayOn);
+    trayBtn.setAttribute('aria-pressed', trayOn ? 'true' : 'false');
+    trayBtn.disabled = trayForced;
+    trayBtn.title = trayForced ? '关闭行为为「进托盘」时强制开启' : '常驻系统托盘';
+  }
+  const autoBtn = $('#general-autostart');
+  if (autoBtn) {
+    const on = settings.autoStart === true;
+    autoBtn.classList.toggle('on', on);
+    autoBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  const startBtn = $('#general-start-minimized');
+  if (startBtn) {
+    const available = trayOn && settings.autoStart === true;
+    const on = available && settings.startMinimized === true;
+    startBtn.classList.toggle('on', on);
+    startBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    startBtn.disabled = !available;
+  }
+}
+
+async function persistGeneralSettings(patch) {
+  state.settings = {
+    ...defaultSettings(),
+    ...(state.settings || {}),
+    providers: state.providers,
+    ...patch,
+  };
+  renderGeneralSettings();
+  const status = $('#general-status');
+  try {
+    const saved = await invoke('save_settings', { settings: state.settings });
+    state.settings = {
+      ...defaultSettings(),
+      ...(saved || {}),
+      providers: state.providers,
+      toolPermissions: normalizeToolPermissions(saved?.toolPermissions || state.settings.toolPermissions),
+    };
+    const behaviorState = await invoke('sync_app_behavior').catch(() => null);
+    const warnings = Array.isArray(behaviorState?.warnings) ? behaviorState.warnings : [];
+    if (warnings.length) {
+      UIDialog.toast(warnings.join('；'), 3600);
+      flashSettingsStatus(status, '已保存（部分系统项未生效）');
+    } else {
+      flashSettingsStatus(status, '已保存');
+    }
+    renderGeneralSettings();
+  } catch (err) {
+    flashSettingsStatus(status, '保存失败');
+    UIDialog.toast(err?.message || String(err), 3600);
+  }
+}
+
+let closeDialogOpen = false;
+async function handleCloseRequested() {
+  if (closeDialogOpen) return;
+  closeDialogOpen = true;
+  try {
+    const choice = await UIDialog.dialog({
+      title: '关闭 WePChat',
+      msg: '点击关闭按钮时希望执行什么操作？选择将被记住，之后可在 设置 → 常规 修改。',
+      buttons: [
+        { text: '取消', value: null },
+        { text: '直接退出', value: 'exit' },
+        { text: '隐藏到托盘', value: 'tray', style: 'primary' },
+      ],
+    });
+    if (choice === 'tray') {
+      await persistGeneralSettings({ closeBehavior: 'tray', trayEnabled: true });
+      await invoke('app_hide_to_tray');
+    } else if (choice === 'exit') {
+      await persistGeneralSettings({ closeBehavior: 'exit' });
+      await invoke('app_quit');
+    }
+  } finally {
+    closeDialogOpen = false;
+  }
+}
+
+/* ---- 对话页（全局默认值）---- */
+
+function renderChatDefaults() {
+  const settings = state.settings || {};
+  const prompt = $('#chat-system-prompt');
+  if (prompt && document.activeElement !== prompt) prompt.value = settings.systemPrompt || '';
+  const temp = $('#chat-temperature');
+  if (temp && document.activeElement !== temp) temp.value = settings.temperature ?? '';
+  const max = $('#chat-max-tokens');
+  if (max && document.activeElement !== max) max.value = settings.maxTokens ?? '';
+}
+
+let chatDefaultsTimer = null;
+function scheduleChatDefaultsPersist() {
+  clearTimeout(chatDefaultsTimer);
+  chatDefaultsTimer = setTimeout(async () => {
+    const tempRaw = ($('#chat-temperature')?.value ?? '').trim();
+    const maxRaw = ($('#chat-max-tokens')?.value ?? '').trim();
+    let temperature = null;
+    if (tempRaw !== '') {
+      const parsed = Number(tempRaw);
+      temperature = Number.isFinite(parsed) ? U.clamp(parsed, 0, 2) : null;
+    }
+    let maxTokens = null;
+    if (maxRaw !== '') {
+      const parsed = parseInt(maxRaw, 10);
+      maxTokens = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    }
+    state.settings = {
+      ...defaultSettings(),
+      ...(state.settings || {}),
+      providers: state.providers,
+      systemPrompt: $('#chat-system-prompt')?.value ?? (state.settings?.systemPrompt || ''),
+      temperature,
+      maxTokens,
+    };
+    const status = $('#chat-defaults-status');
+    try {
+      const saved = await invoke('save_settings', { settings: state.settings });
+      state.settings = {
+        ...defaultSettings(),
+        ...(saved || {}),
+        providers: state.providers,
+        toolPermissions: normalizeToolPermissions(saved?.toolPermissions || state.settings.toolPermissions),
+      };
+      flashSettingsStatus(status, '已保存');
+    } catch (err) {
+      flashSettingsStatus(status, '保存失败');
+    }
+  }, 600);
+}
+
+/* ---- 关于页：检查 / 下载 / 安装更新 ---- */
+
+const updateFlow = {
+  phase: 'idle', // idle | checking | uptodate | available | downloading | downloaded | installing | error
+  info: null,
+  installerPath: '',
+  error: '',
+};
+
+function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (value >= 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + ' MB';
+  if (value >= 1024) return (value / 1024).toFixed(0) + ' KB';
+  return value + ' B';
+}
+
+function formatPublishedAt(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+}
+
+function renderUpdateNotes(markdown) {
+  const notes = $('#update-notes');
+  if (!notes) return;
+  const text = String(markdown || '').trim();
+  if (!text) {
+    notes.hidden = true;
+    return;
+  }
+  notes.innerHTML = window.MD?.render ? window.MD.render(text) : '';
+  if (!notes.innerHTML) notes.textContent = text;
+  notes.hidden = false;
+}
+
+function setUpdateProgress(received, total) {
+  const totalNum = Number(total) || Number(updateFlow.info?.asset?.size) || 0;
+  const pct = totalNum > 0 ? Math.min(100, Math.round((Number(received) / totalNum) * 100)) : 0;
+  const fill = $('#update-progress-fill');
+  const text = $('#update-progress-text');
+  if (fill) fill.style.width = pct + '%';
+  if (text) {
+    text.textContent = totalNum > 0 ? `${pct}% · ${formatBytes(received)}` : formatBytes(received);
+  }
+}
+
+function markAboutUpdateBadge(on) {
+  $('#settings-nav [data-settings="about"]')?.classList.toggle('has-update', !!on);
+}
+
+function renderUpdateCard() {
+  const card = $('#update-card');
+  if (!card) return;
+  const title = $('#update-title');
+  const sub = $('#update-sub');
+  const notes = $('#update-notes');
+  const progress = $('#update-progress');
+  const actions = $('#update-actions');
+  const checkBtn = $('#btn-check-update');
+  if (checkBtn) {
+    checkBtn.disabled = ['checking', 'downloading', 'installing'].includes(updateFlow.phase);
+  }
+  card.hidden = updateFlow.phase === 'idle';
+  if (card.hidden) return;
+  if (notes) notes.hidden = true;
+  if (progress) progress.hidden = true;
+  if (actions) {
+    actions.hidden = true;
+    actions.innerHTML = '';
+  }
+  const addAction = (text, style, onClick) => {
+    if (!actions) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = style === 'primary' ? 'primary-btn' : 'secondary-btn';
+    btn.textContent = text;
+    btn.addEventListener('click', onClick);
+    actions.hidden = false;
+    actions.appendChild(btn);
+  };
+  const info = updateFlow.info;
+  const currentVersion = state.meta?.version ? `v${state.meta.version}` : '';
+  switch (updateFlow.phase) {
+    case 'checking':
+      if (title) title.textContent = '正在检查更新…';
+      if (sub) sub.textContent = `当前版本 ${currentVersion}`;
+      break;
+    case 'uptodate':
+      if (title) title.textContent = '已是最新版本';
+      if (sub) sub.textContent = `当前版本 ${currentVersion}`;
+      break;
+    case 'available': {
+      if (title) title.textContent = `发现新版本 v${info?.version || ''}`;
+      if (sub) {
+        sub.textContent = [
+          info?.tag,
+          formatBytes(info?.asset?.size),
+          formatPublishedAt(info?.publishedAt),
+        ].filter(Boolean).join(' · ');
+      }
+      renderUpdateNotes(info?.notes || '');
+      addAction('下载更新', 'primary', startUpdateDownload);
+      addAction('查看 Release', '', () => openExternalUrl(info?.releaseUrl || REPO_RELEASES_URL));
+      break;
+    }
+    case 'downloading':
+      if (title) title.textContent = `正在下载 v${info?.version || ''}…`;
+      if (sub) sub.textContent = info?.asset?.name || '';
+      if (progress) progress.hidden = false;
+      addAction('取消下载', '', () => invoke('update_download_abort').catch(() => {}));
+      break;
+    case 'downloaded':
+      if (title) title.textContent = '下载完成，准备安装';
+      if (sub) sub.textContent = '将退出应用并启动安装向导，安装完成后请重新打开';
+      renderUpdateNotes(info?.notes || '');
+      addAction('安装并退出', 'primary', installUpdateNow);
+      break;
+    case 'installing':
+      if (title) title.textContent = '正在启动安装程序…';
+      if (sub) sub.textContent = '应用即将退出';
+      break;
+    case 'error':
+      if (title) title.textContent = '更新失败';
+      if (sub) sub.textContent = updateFlow.error || '';
+      addAction('重试检查', 'primary', () => checkForUpdate());
+      addAction('去 GitHub 下载', '', () =>
+        openExternalUrl(updateFlow.info?.releaseUrl || REPO_RELEASES_URL)
+      );
+      break;
+  }
+}
+
+async function checkForUpdate(options = {}) {
+  const silent = options.silent === true;
+  if (silent && updateFlow.phase !== 'idle') return;
+  if (!silent) {
+    updateFlow.phase = 'checking';
+    updateFlow.error = '';
+    renderUpdateCard();
+  }
+  try {
+    const info = await invoke('update_check');
+    updateFlow.info = info || null;
+    if (info?.hasUpdate) {
+      updateFlow.phase = 'available';
+      markAboutUpdateBadge(true);
+    } else {
+      markAboutUpdateBadge(false);
+      if (silent) return;
+      updateFlow.phase = 'uptodate';
+    }
+  } catch (err) {
+    if (silent) return;
+    updateFlow.phase = 'error';
+    updateFlow.error = err?.message || String(err);
+  }
+  renderUpdateCard();
+}
+
+async function startUpdateDownload() {
+  const asset = updateFlow.info?.asset;
+  if (!asset?.url || !asset?.name) return;
+  updateFlow.phase = 'downloading';
+  renderUpdateCard();
+  setUpdateProgress(0, asset.size || 0);
+  try {
+    const path = await invoke('update_download', {
+      url: asset.url,
+      fileName: asset.name,
+      sha256: asset.sha256 || null,
+    });
+    updateFlow.installerPath = path;
+    updateFlow.phase = 'downloaded';
+  } catch (err) {
+    const message = err?.message || String(err);
+    if (message.includes('已取消')) {
+      updateFlow.phase = 'available';
+    } else {
+      updateFlow.phase = 'error';
+      updateFlow.error = message;
+    }
+  }
+  renderUpdateCard();
+}
+
+async function installUpdateNow() {
+  if (!updateFlow.installerPath) return;
+  updateFlow.phase = 'installing';
+  renderUpdateCard();
+  try {
+    await invoke('update_install', { path: updateFlow.installerPath });
+  } catch (err) {
+    updateFlow.phase = 'error';
+    updateFlow.error = err?.message || String(err);
+    renderUpdateCard();
+  }
+}
+
+/* ---- 新增设置页事件绑定 + 运行时事件 ---- */
+
+function bindSettingsExtras() {
+  $('#close-behavior-seg')?.addEventListener('click', (event) => {
+    const btn = event.target.closest('.seg-btn');
+    if (!btn) return;
+    const mode = btn.dataset.mode;
+    const patch = { closeBehavior: mode };
+    if (mode === 'tray') patch.trayEnabled = true;
+    persistGeneralSettings(patch);
+  });
+  $('#general-tray')?.addEventListener('click', () => {
+    const on = state.settings?.trayEnabled !== true;
+    const patch = { trayEnabled: on };
+    if (!on) patch.startMinimized = false;
+    persistGeneralSettings(patch);
+  });
+  $('#general-autostart')?.addEventListener('click', () => {
+    const on = state.settings?.autoStart !== true;
+    const patch = { autoStart: on };
+    if (!on) patch.startMinimized = false;
+    persistGeneralSettings(patch);
+  });
+  $('#general-start-minimized')?.addEventListener('click', () => {
+    persistGeneralSettings({ startMinimized: state.settings?.startMinimized !== true });
+  });
+
+  ['#chat-system-prompt', '#chat-temperature', '#chat-max-tokens'].forEach((sel) => {
+    $(sel)?.addEventListener('input', scheduleChatDefaultsPersist);
+  });
+
+  $('#btn-browse-workspace')?.addEventListener('click', async () => {
+    try {
+      const picked = await invoke('pick_folder_path', {
+        title: '选择会话工作区根目录',
+        defaultPath: $('#workspace-custom')?.value || state.resolvedWorkspaceRoot || null,
+      });
+      if (picked) {
+        const input = $('#workspace-custom');
+        if (input) input.value = picked;
+      }
+    } catch (err) {
+      UIDialog.toast(err?.message || String(err));
+    }
+  });
+  $('#btn-open-workspace-root')?.addEventListener('click', () =>
+    openLocalPath($('#workspace-resolved')?.value)
+  );
+  $('#btn-open-session-workspace')?.addEventListener('click', () =>
+    openLocalPath($('#workspace-session-path')?.value)
+  );
+
+  $('#btn-about-github')?.addEventListener('click', () => openExternalUrl(REPO_URL));
+  $('#btn-about-issues')?.addEventListener('click', () => openExternalUrl(REPO_ISSUES_URL));
+  $('#btn-check-update')?.addEventListener('click', () => checkForUpdate());
+}
+
+function bindAppRuntimeEvents() {
+  const eventApi = window.__TAURI__?.event;
+  if (!eventApi?.listen) return;
+  eventApi.listen('app://close-requested', () => handleCloseRequested());
+  eventApi.listen('tray://new-chat', async () => {
+    setMode('chat');
+    await createNewChat();
+  });
+  eventApi.listen('update://progress', (event) => {
+    if (updateFlow.phase !== 'downloading') return;
+    const payload = event?.payload || {};
+    setUpdateProgress(payload.received, payload.total);
+  });
 }
 
 async function loadBackend() {
@@ -4342,8 +4804,9 @@ async function boot() {
     window.ImageMode.bindUi();
   }
   await bindWindowControls({ setListCollapsed, setMaximizedUi });
+  bindAppRuntimeEvents();
   setMode('chat');
-  setSettingsPage('providers');
+  setSettingsPage('general');
   setListCollapsed(false);
   setRightOpen(false);
   window.PreviewStream?.setApplyHandler?.(applyStreamPreview);
@@ -4353,6 +4816,8 @@ async function boot() {
   setMode(state.session?.mode === 'image' ? 'image' : 'chat');
   renderSessions();
   if (window.ImageMode) window.ImageMode.renderImageSessionList();
+  // 启动后静默检查一次更新：有新版本时只在「关于」导航挂小红点
+  setTimeout(() => checkForUpdate({ silent: true }).catch(() => {}), 4000);
 }
 
 boot().catch((err) => console.error('Unable to start WePChat:', err));

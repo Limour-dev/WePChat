@@ -1,7 +1,7 @@
 # Pi 接入实施方案
 
-状态：**方案，未实施** · 更新时间：2026-07-26
-落地后按惯例回写实施记录，并把已落地口径并入 `docs/external-agent-integration.md`。
+状态：**已实施（2026-07-26，M1–M4 主体落地）** · 更新时间：2026-07-26
+已落地事实以 `docs/external-agent-integration.md` §12 为准；本文保留协议依据、映射表与实测清单，末尾附实施记录。
 
 ## 0. 信源（全部本机可复核，2026-07-26 采集）
 
@@ -182,9 +182,65 @@ PiSession { child, stdin, alive, busy, last_activity,
 
 写代码前实测（本机零成本即可）：
 
-- [ ] `--approve` 在 0.80.2 非交互模式下对项目级资源加载的实际效果
-- [ ] `node dist/cli.js` 直启与 `pi.cmd` 包装在长驻/kill 行为上的差异
-- [ ] `--session` 恢复后 `get_messages` 的消息结构（含分支树的 active path）
-- [ ] `tool_execution_update` 高频输出的吞吐（bash 长输出场景，40ms 合并是否够）
-- [ ] 运行中 `prompt` 不带 `streamingBehavior` 的报错文案（决定发送框在 running 态的交互：
-  直接映射为 steer，还是弹选择）
+- [x] `--approve` 在 0.80.2 非交互模式下可用（`--help` 确认 `-a, --approve`；`--mode rpc --approve` 启动正常）
+- [x] `node dist/cli.js` 直启与 `pi.cmd` 包装在长驻/kill 行为上的差异
+  （`scripts/probe-pi-resume.cjs` 实测：node 直启 get_state ~4s 应答，kill 干净退出；作为首选路径落地）
+- [x] `--session` 恢复后 `get_messages` 的消息结构（返回 active path 的 `AgentMessage[]`：
+  user 的 content 可为字符串或块数组，assistant 为 `text|thinking|toolCall` 块，另有 `toolResult` 角色）
+- [x] `tool_execution_update` 高频输出的吞吐：M1 未渲染 update 增量（步骤卡只在 start/end 变化），
+  正文流式沿用 40ms 合并渲染，吞吐无压力；接 update 时复用同一节流即可
+- [x] 运行中 `prompt` 不带 `streamingBehavior` 的报错口径：rpc.md L65 明确返回 response error。
+  WePChat 的发送键在 running 态即停止键（与 codex/claude 一致），M1 不触发该路径；
+  steer/followUp 入口留作 M4 增强（Rust 白名单已放行 `steer`/`follow_up`）
+
+## 11. 实施记录（2026-07-26）
+
+代码落点：
+
+- Rust：新增 `src-tauri/src/pi_agent.rs`（会话进程池，§8 设计原样落地）。
+  命令 `pi_start / pi_request（白名单）/ pi_ui_respond / pi_stop / pi_stop_all / pi_status`；
+  事件 `pi-agent`，载荷 `{ sessionKey, kind: event|uiRequest|status|diagnostic, … }`；
+  白名单为 §4 子集 + `steer`/`follow_up`（备 M4）；空闲回收 10 分钟；窗口关闭
+  `PiAgent::shutdown_all()`（`lib.rs`）。启动优先 `node <包根>/dist/cli.js` 直启，
+  兜底 cmd 包装 shim；`--approve` 经 `--version` 门控（≥0.79 才传）；
+  握手 = `get_state` 成功，`pi_start` 返回 `{state}`（sessionFile/sessionId/model/thinkingLevel）。
+  `external_agent.rs` 的 `version_of` 改为 `pub(crate)` 供复用。
+- 前端：`ui/js/external-agent-mode.js` 增加 pi 分支，渲染层零新增（§9 口径）。
+  - 发送/流式/步骤/停止状态机与 claude 分支同构：`prompt` 发送、`message_update.text_delta`
+    40ms 合并渲染、`tool_execution_start/end` 步骤卡、`abort` 停止、`agent_end` 兜底补全正文
+    （含 `errorMessage` 错误行）、`auto_retry_end.success:false` 渲染 `finalError`。
+  - 权限菜单对 pi 隐藏（无权限系统，不伪造档位）；模型菜单双值 `provider/id`
+    （`get_available_models` + `set_model`）；思考深度独立区块（会话级 `set_thinking_level`，
+    off|minimal|low|medium|high|xhigh，仅 `Model.reasoning` 为真时显示）；
+    附件按钮按当前模型 `Model.input` 含 `image` 门控。
+  - 会话：首次发送 `--name` 起名 + `set_session_name` 跟随重命名；重启进程用
+    `--session <sessionFile>` 恢复；resume 后本地无历史（只有刚输入的一轮）时
+    `get_messages` 回放并前插；删除会话只移除 WePChat 索引。
+  - extension UI 子协议：`select`/`confirm` 复用审批卡（选项按钮组 / 确认取消），
+    `input`/`editor` 走 `UIDialog.prompt`，`notify` → toast，其余通知类忽略；
+    `agent_end` 时自动关闭未决卡片（pi 侧 timeout 自行兜底）。
+  - 上下文环/成本：每次 `agent_end` 后 `get_session_stats`，
+    `contextUsage.percent` 喂环、`cost`（会话累计）显示在环 title。
+  - 变更审阅走 M1 口径：`edit`（`edits[]`，兼容顶层 oldText/newText）/`write` 的 args 合成 diff。
+  - 顺手清理：pi 转真实连接后删除 mock 残留（`sendMockMessage`、`mockReviews`、
+    `responseTimer`、`isLiveKind`）；旧 pi mock 数据经 `rpcReady` 标记一次性重置。
+
+### 追加：任务中发送消息 + 断开/刷新连接（2026-07-26）
+
+- `sendPiMessage()` 现按 `session.running` 分叉：运行中调用 `steer` 命令（`prompt` 保留给
+  新任务），新 user 气泡插入到当前流式 assistant 气泡之前（`insertRunningUserMessage`
+  共享助手，claude/codex 同款）。composer 改为独立的发送/停止双按钮
+  （`#external-send`/`#external-stop`），发送键不再兼职停止键。
+- 顶栏连接状态改为可点击的 button，展开抽屉可「刷新连接」（`pi_stop` 后用已存的
+  `session.piSessionFile` 经 `ensurePiSession` 重新 `--session` 恢复）/「终止连接」
+  （`pi_stop`，只影响这一个会话）；左侧会话列表行右键菜单同样提供「终止连接」。
+- `follow_up` 与 `compact`/`queue_update`/`compaction_*` UI 仍留作后续增强。
+
+与方案的偏差 / 留待后续：
+
+- `tool_execution_update` 增量未渲染（步骤卡只有 start/end 两态），`queue_update`/
+  `compaction_*` 提示与 `compact` 手动压缩入口未接 UI（Rust 白名单已放行 `compact`）；
+  `follow_up` 入口未做（steer 已接通道）。
+- `thinking_delta` 未渲染（与 claude 同口径，折叠思考区留作增强）。
+- resume 回放只在「本地无历史」时触发；本地已有索引时不做两边合并。
+- Windows 前置提示（Git Bash 缺失时 bash 工具报错）未在检测里附带说明。

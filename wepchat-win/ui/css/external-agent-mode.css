@@ -57,6 +57,15 @@
 
 .external-agent-list.is-disabled { opacity: 0.58; }
 
+/* 每个 agent 独立卡片：头行（品牌+状态+检测+开关）+ 卡内路径字段 */
+.external-agent-card { margin-bottom: 12px; }
+.external-agent-card .external-agent-path {
+  margin: 0;
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.external-agent-card .external-agent-path .field-label { padding-top: 12px; }
+
 .external-agent-row .settings-row-text {
   overflow: hidden;
 }
@@ -324,6 +333,17 @@
   color: var(--text3);
   font-size: 11px;
   white-space: nowrap;
+  /* 元素改为 button 以支持点击展开连接抽屉，重置默认按钮外观。 */
+  background: none;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.external-connection-menu {
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
 }
 
 .external-runtime-state::before {

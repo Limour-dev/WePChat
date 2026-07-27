@@ -11,7 +11,7 @@ export const invoke = (cmd, args) => {
 
 export const state = {
   mode: 'chat',
-  settingsPage: 'providers',
+  settingsPage: 'general',
   rightOpen: false,
   rightTabs: [],
   activeRightTabId: null,
@@ -131,6 +131,10 @@ export function defaultSettings() {
     maxToolRounds: 8,
     maxToolCalls: 24,
     toolPermissions: defaultToolPermissions(),
+    closeBehavior: 'ask',
+    trayEnabled: false,
+    autoStart: false,
+    startMinimized: false,
     externalConnections: {
       enabled: false,
       agents: {

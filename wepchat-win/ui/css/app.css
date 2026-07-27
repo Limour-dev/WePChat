@@ -611,6 +611,18 @@ html.is-resizing .app-body .right-pane {
   font-weight: 600;
 }
 
+/* 「关于」导航的更新提示点（静默检查发现新版本时） */
+.settings-nav-item.has-update::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--danger);
+  margin-left: 7px;
+  vertical-align: 2px;
+}
+
 /* ── Main ── */
 .main {
   min-width: 0;
@@ -1751,16 +1763,17 @@ html.is-resizing .app-body .right-pane {
 }
 
 /* ── Settings ── */
+/* 滚动容器占满整列，滚动条贴面板右缘；内容宽度约束在 .settings-page 上 */
 .settings-content {
   flex: 1;
   overflow: auto;
   padding: 32px 40px 56px;
-  max-width: 620px;
 }
 
 .settings-page {
   display: none;
   animation: fade-up 0.28s var(--ease);
+  max-width: 620px;
 }
 
 .settings-page.is-active {
@@ -1850,6 +1863,39 @@ html.is-resizing .app-body .right-pane {
 .field-input[readonly] {
   background: var(--bg2);
   color: var(--text2);
+}
+
+/* 路径输入 + 浏览/打开按钮组合 */
+.path-field {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.path-field .field-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.path-btn {
+  flex: none;
+  align-self: center;
+  padding: 9px 12px;
+}
+
+/* 数字输入不必通栏 */
+.num-field {
+  max-width: 200px;
+}
+
+/* 对话页系统提示词 */
+#chat-system-prompt {
+  resize: vertical;
+  min-height: 96px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .field-actions {
@@ -4435,6 +4481,168 @@ dialog #wc-toast {
 
 .tool-perm-list {
   margin-bottom: 8px;
+}
+
+/* ── 关于页 ── */
+.about-card {
+  padding: 18px 18px 16px;
+}
+
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.about-mark {
+  width: 52px;
+  height: 52px;
+  flex: none;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg2);
+  border: 1px solid var(--border-soft);
+  color: var(--text2);
+}
+
+.about-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.about-title strong {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.about-version {
+  font-size: 12.5px;
+  color: var(--text2);
+  font-family: var(--mono);
+}
+
+.about-sub {
+  font-size: 12px;
+  color: var(--text3);
+  line-height: 1.5;
+}
+
+.about-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.about-actions .primary-btn {
+  margin-left: auto;
+}
+
+.about-oss {
+  margin-top: 4px;
+}
+
+.about-oss summary {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text3);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 0;
+}
+
+.about-oss .settings-p {
+  margin: 8px 0 0;
+}
+
+/* ── 更新卡片 ── */
+.update-card {
+  padding: 16px 18px;
+}
+
+.update-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.update-notes {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg2);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text2);
+  max-height: 240px;
+  overflow: auto;
+  user-select: text;
+}
+
+.update-notes h1,
+.update-notes h2,
+.update-notes h3 {
+  font-size: 13px;
+  margin: 10px 0 6px;
+}
+
+.update-notes p,
+.update-notes ul {
+  margin: 6px 0;
+}
+
+.update-notes ul {
+  padding-left: 18px;
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.update-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg2);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+
+.update-progress-bar i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s var(--ease);
+}
+
+.update-progress-text {
+  flex: none;
+  font-size: 12px;
+  color: var(--text2);
+  font-family: var(--mono);
+  min-width: 76px;
+  text-align: right;
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
 /* Appearance theme picker */

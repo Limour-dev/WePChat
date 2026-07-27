@@ -119,7 +119,7 @@ fn build_headers(map: &Option<HashMap<String, String>>) -> Result<HeaderMap, Str
     Ok(headers)
 }
 
-fn shared_client() -> Result<&'static Client, String> {
+pub(crate) fn shared_client() -> Result<&'static Client, String> {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<Client> = OnceLock::new();
     if let Some(c) = CLIENT.get() {

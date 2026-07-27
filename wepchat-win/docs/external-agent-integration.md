@@ -2,12 +2,12 @@
 
 更新时间：2026-07-26
 
-本文记录 WePChat Windows 当前已落地的 External Agent 接入方式。它是后续维护 Codex / Claude Code 集成时的唯一工程说明，不记录已废弃的 ACP、`codex exec --json`、演示终端或 mock 方案。
+本文记录 WePChat Windows 当前已落地的 External Agent 接入方式。它是后续维护 Codex / Claude Code / Pi 集成时的唯一工程说明，不记录已废弃的 ACP、`codex exec --json`、演示终端或 mock 方案。
 
 ## 1. 当前范围
 
-- Codex 与 Claude Code 是真实接入的外部 Agent（Claude Code 见 §11）；Pi 保留为 UI 占位，不得伪装为已连接。
-- Codex 连接协议是 CLI 的 `app-server --stdio` JSON-RPC JSONL；Claude Code 是 `--print` 模式的 stream-json JSONL 双向流 + control 通道。
+- Codex、Claude Code 与 Pi 均为真实接入的外部 Agent（Claude Code 见 §11，Pi 见 §12）。
+- Codex 连接协议是 CLI 的 `app-server --stdio` JSON-RPC JSONL；Claude Code 是 `--print` 模式的 stream-json JSONL 双向流 + control 通道；Pi 是 `--mode rpc` 的命令/响应/事件 JSONL。
 - 进程按首次实际发送任务启动；切换到 External Agent 页面、查看文件树或打开终端都不得隐式启动任何 Agent。
 - 每个项目下可有多个会话；文件、终端与打开位置均以当前项目目录为范围。
 
@@ -20,13 +20,14 @@ WebView
 Rust
   external_agent.rs     Codex app-server 生命周期与 JSONL RPC
   claude_agent.rs       Claude Code 会话进程池与 stream-json 流
+  pi_agent.rs           Pi 会话进程池与 --mode rpc JSONL
   external_project.rs   只读项目文件树与文件内容
   external_terminal.rs  Windows ConPTY + 真 PowerShell
   external_open.rs      当前项目的受限外部打开方式
-    -> Codex CLI / Claude CLI / Windows process
+    -> Codex CLI / Claude CLI / Pi CLI / Windows process
 ```
 
-`src-tauri/src/lib.rs` 必须同时注册上述命令，并在窗口关闭时调用 `CodexAppServer::shutdown()`、`ClaudeAgent::shutdown_all()` 与 `PowerShellTerminal::shutdown()`，避免遗留子进程。
+`src-tauri/src/lib.rs` 必须同时注册上述命令，并在窗口关闭时调用 `CodexAppServer::shutdown()`、`ClaudeAgent::shutdown_all()`、`PiAgent::shutdown_all()` 与 `PowerShellTerminal::shutdown()`，避免遗留子进程。
 
 ## 3. Codex app-server
 
@@ -89,6 +90,22 @@ account/read
 - 工具状态、agent message delta、turn started/completed、diff、token usage 都增量更新现有消息对象，避免为了流式文本重建整个页面。
 - 外链一律使用 `_blank` 与 `noopener noreferrer`，由 Tauri opener 在外部打开，禁止 WebView 内部跳转覆盖当前聊天。
 
+## 5.1 任务中追加消息 / 断开与刷新连接（2026-07-26 三家统一补齐）
+
+- **运行中发送**：composer 是独立的发送/停止双按钮（`#external-send`/`#external-stop`，
+  同款先例见生图模式 `#btn-image-send`/`#btn-image-stop`），发送键不再兼职停止键。
+  `session.running` 时点发送走"追加消息"通道而不是新任务：codex 用 `turn/steer`
+  （`threadId`+`expectedTurnId`+`input`，`expectedTurnId` 必须等于当前活跃 turn）；
+  claude 在正常 `user` 消息上加 `"priority":"next"`（`claude_send` 透传，Rust 不用改）；
+  pi 用已白名单的 `steer` 命令。新 user 气泡通过 `insertRunningUserMessage` 插到当前
+  流式 assistant 气泡之前，避免"助手气泡还在变长，下面却冒出更晚消息"的错序。
+- **断开/刷新连接**：顶栏连接状态文字改为可点击 button，展开抽屉提供"刷新连接"
+  （断开旧进程后用同一个 resume/session id 立即重连：claude/pi 复用
+  `ensureClaudeSession`/`ensurePiSession`，codex 复用 `ensureCodexConnection`）与
+  "终止连接"；左侧会话列表行右键菜单同样提供"终止连接"（复用 `.context-menu` 视觉）。
+  **Codex 是共享连接**（一个 `CodexAppServer` 进程管全部会话），终止/刷新会影响本次应用内
+  全部 Codex 会话，确认弹窗需要明确写出这一点；claude/pi 是一会话一进程，只影响当前这个。
+
 ## 6. 项目文件
 
 文件侧栏不依赖 Codex `fs/*`，这样在第一次任务前也可用。
@@ -143,6 +160,14 @@ account/read
 8. 打开位置只打开当前项目，缺失的程序不显示。
 9. Claude Code：首次发送完成 system/init + initialize 握手；`can_use_tool` 三按钮、
    停止（interrupt）、`--resume` 恢复、空闲回收后再发送可透明续接。
+10. Pi：首次发送完成 get_state 握手；模型/思考深度切换、abort 停止、
+    `--session` 恢复 + get_messages 回放、附件按模型 input 门控、
+    权限菜单确认隐藏（不得出现假档位）。
+11. 三家运行中都能在输入框追加消息（不打断当前任务），新气泡出现在正确位置；
+    独立停止按钮能正常中断且不影响发送键可用性判断。
+12. 顶栏连接状态抽屉的"刷新连接"能续上同一会话对话；会话列表右键"终止连接"
+    对非当前会话也生效；Codex 终止/刷新时确认弹窗提示"影响全部 Codex 会话"，
+    触发后其余 Codex 会话状态一并变化。
 
 ## 11. Claude Code stream-json
 
@@ -175,3 +200,39 @@ account/read
 - **生命周期**：空闲 10 分钟（无运行轮次且无消息）自动回收进程，之后发送任务时
   `--resume` 透明恢复；窗口关闭 shutdown 全部子进程；会话删除只移除 WePChat 索引，
   不删 `~/.claude/projects/` 下的转录文件。
+
+## 12. Pi --mode rpc
+
+协议依据与完整映射表在 `docs/pi-integration.md`（权威信源：pi 包内 docs/rpc.md），这里只记已落地口径。
+
+- **进程模型**：一个进程 = 一个会话（与 claude 相同）。Rust 侧 `pi_agent.rs` 维护
+  `sessionKey → 子进程` 池；pi 自己的 `sessionFile` / `sessionId`（取自 get_state）存在
+  会话数据里，重启进程时用 `--session <sessionFile>` 恢复上下文。
+- **启动**：`pi --mode rpc [--approve] [--session <file>] [--name <标题>]`，工作目录 =
+  项目目录；Windows 上优先 `node <npm 包根>/dist/cli.js` 直启（pi 无原生 exe，直启保证
+  kill 干净），兜底 `cmd.exe /D /S /C call pi.cmd`；`--approve` 经 `--version` 门控
+  （≥0.79 才传）。握手 = `get_state` 成功，`pi_start` 返回 `{state}`。
+- **命令与事件**：`pi_start / pi_request（白名单：prompt、steer、follow_up、abort、
+  get_state、get_available_models、set_model、set_thinking_level、get_session_stats、
+  set_session_name、get_messages、compact）/ pi_ui_respond / pi_stop / pi_stop_all /
+  pi_status`；事件 `pi-agent`，载荷 `{ sessionKey, kind: event|uiRequest|status|diagnostic }`，
+  未知事件前端一律忽略。消息三类：命令（带 id）→ 响应（同 id 回填）；事件无 id 异步流。
+- **无权限系统**：pi 无沙箱、无权限档、无逐操作审批（security.md 设计取舍），UI 隐藏权限
+  菜单，不伪造档位。审批类交互只可能来自用户自装扩展经 extension UI 子协议：
+  `select`/`confirm` 复用审批卡，`input`/`editor` 走对话框，`notify` → toast，
+  应答用 `pi_ui_respond`（带 timeout 的请求 pi 侧到时自动兜底）。
+- **模型与思考深度**：模型菜单吃 `get_available_models`（`provider/id` 双值），运行外
+  `set_model` 切换；思考深度是会话级 `set_thinking_level`（off–xhigh，仅
+  `Model.reasoning` 为真时显示）。图片附件按当前模型 `Model.input` 含 `image` 门控。
+- **流式与步骤**：`message_update` 的 `text_delta` 40ms 合并渲染；
+  `tool_execution_start/end` 映射步骤卡；`agent_start/agent_end` 起止 running 态，
+  `agent_end` 的 messages 兜底补全正文；停止用 `abort`。
+- **上下文与成本**：每次 `agent_end` 后 `get_session_stats`，`contextUsage.percent` 喂
+  上下文环，`cost`（会话累计）显示在环 title。
+- **变更审阅**：M1 口径，从 `edit`（`edits[]`，兼容顶层 oldText/newText）/`write` 工具的
+  args 合成 diff 喂现有审阅 UI。
+- **生命周期**：空闲 10 分钟自动回收进程，之后发送任务时 `--session` 透明恢复（本地无
+  历史时用 `get_messages` 回放）；窗口关闭 shutdown 全部子进程；会话删除只移除 WePChat
+  索引，不删 `~/.pi/agent/sessions/` 下的 JSONL 文件。
+- **Windows 前置**：pi 的 bash 工具依赖 Git Bash / MSYS2（pi docs/windows.md）；缺失只影响
+  任务内 bash 工具，不影响连接。

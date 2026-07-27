@@ -160,7 +160,7 @@ pub(crate) fn resolve_command_path(path_or_command: &str) -> Result<Option<Strin
     where_command(value)
 }
 
-fn version_of(path_or_command: &str) -> Option<String> {
+pub(crate) fn version_of(path_or_command: &str) -> Option<String> {
     Command::new(path_or_command)
         .arg("--version")
         .stdout(Stdio::piped())
@@ -564,6 +564,7 @@ fn allowed_codex_method(method: &str) -> bool {
             | "thread/name/set"
             | "thread/archive"
             | "turn/start"
+            | "turn/steer"
             | "turn/interrupt"
             | "review/start"
             | "fs/readDirectory"

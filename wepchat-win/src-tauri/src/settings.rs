@@ -120,6 +120,20 @@ pub struct AppSettings {
     #[serde(default)]
     pub external_connections: ExternalAgentSettings,
 
+    /* ---------- General (window / tray / startup) ---------- */
+    /// Close-button behavior: "ask" (default, prompt once) | "exit" | "minimize" | "tray"
+    #[serde(default = "default_close_behavior")]
+    pub close_behavior: String,
+    /// Keep a tray icon while the app runs. Forced on when close_behavior == "tray".
+    #[serde(default)]
+    pub tray_enabled: bool,
+    /// Launch on system startup.
+    #[serde(default)]
+    pub auto_start: bool,
+    /// When launched by autostart, start hidden in the tray.
+    #[serde(default)]
+    pub start_minimized: bool,
+
     /* ---------- Image generation (align Android store.js) ---------- */
     #[serde(default)]
     pub image_provider_id: String,
@@ -151,6 +165,10 @@ pub struct AppSettings {
 
 fn default_theme() -> String {
     "light".into()
+}
+
+fn default_close_behavior() -> String {
+    "ask".into()
 }
 
 fn default_theme_style() -> String {
@@ -210,6 +228,10 @@ impl Default for AppSettings {
             max_tool_calls: default_max_tool_calls(),
             tool_permissions: ToolPermissions::default(),
             external_connections: ExternalAgentSettings::default(),
+            close_behavior: default_close_behavior(),
+            tray_enabled: false,
+            auto_start: false,
+            start_minimized: false,
             image_provider_id: String::new(),
             image_model: String::new(),
             image_edit_model: String::new(),

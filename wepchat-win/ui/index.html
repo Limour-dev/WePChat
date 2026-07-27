@@ -167,11 +167,14 @@
             <h1 class="list-title">设置</h1>
           </header>
           <nav class="settings-nav" id="settings-nav">
-            <button type="button" class="settings-nav-item is-active" data-settings="providers">
+            <button type="button" class="settings-nav-item is-active" data-settings="general">
+              常规
+            </button>
+            <button type="button" class="settings-nav-item" data-settings="providers">
               模型与供应商
             </button>
-            <button type="button" class="settings-nav-item" data-settings="workspace">
-              对话文件目录
+            <button type="button" class="settings-nav-item" data-settings="chat">
+              对话
             </button>
             <button type="button" class="settings-nav-item" data-settings="agent">
               工具与代理
@@ -181,6 +184,9 @@
             </button>
             <button type="button" class="settings-nav-item" data-settings="image">
               生图
+            </button>
+            <button type="button" class="settings-nav-item" data-settings="workspace">
+              对话文件目录
             </button>
             <button type="button" class="settings-nav-item" data-settings="appearance">
               外观
@@ -374,7 +380,10 @@
             <div class="external-session-meta">
               <div class="external-session-title-row">
                 <strong id="external-main-session-title">完善外部 Agent UI</strong>
-                <span class="external-runtime-state is-disconnected" id="external-runtime-state">未连接</span>
+                <div class="external-popover-wrap">
+                  <button type="button" class="external-runtime-state is-disconnected" id="external-runtime-state" aria-haspopup="menu" aria-expanded="false">未连接</button>
+                  <div class="external-popover external-connection-menu" id="external-connection-menu" role="menu" hidden></div>
+                </div>
               </div>
             </div>
             <div class="external-main-actions">
@@ -424,6 +433,9 @@
                   <div class="external-popover external-model-menu" id="external-model-menu" role="menu" hidden></div>
                 </div>
               </div>
+              <button type="button" class="send-btn is-stop" id="external-stop" title="停止" aria-label="停止" hidden>
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 6h12v12H6z"/></svg>
+              </button>
               <button type="button" class="send-btn" id="external-send" title="发送" aria-label="发送" disabled>
                 <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg>
               </button>
@@ -437,7 +449,69 @@
 
         <section class="main-view" data-view="settings">
           <div class="settings-content" id="settings-content">
-            <div class="settings-page is-active" data-settings-page="providers">
+            <div class="settings-page is-active" data-settings-page="general">
+              <h2 class="settings-h">常规</h2>
+              <p class="settings-p">窗口关闭行为、系统托盘与开机自启。本页改动即刻生效并保存。</p>
+              <div class="settings-card">
+                <div class="settings-row">
+                  <div class="settings-row-text">
+                    <span class="settings-row-title">关闭主窗口时</span>
+                    <span class="settings-row-sub" id="general-close-sub">尚未选择：点击关闭按钮时会询问一次</span>
+                  </div>
+                  <div class="seg" id="close-behavior-seg" role="group" aria-label="关闭行为" style="width:236px">
+                    <button type="button" class="seg-btn" data-mode="minimize">最小化</button>
+                    <button type="button" class="seg-btn" data-mode="tray">进托盘</button>
+                    <button type="button" class="seg-btn" data-mode="exit">退出</button>
+                  </div>
+                </div>
+              </div>
+              <div class="settings-card">
+                <div class="settings-row">
+                  <div class="settings-row-text">
+                    <span class="settings-row-title">常驻系统托盘</span>
+                    <span class="settings-row-sub">运行时显示托盘图标；关闭行为为「进托盘」时强制开启</span>
+                  </div>
+                  <button type="button" class="switch" id="general-tray" aria-pressed="false" title="常驻系统托盘"></button>
+                </div>
+                <div class="settings-row">
+                  <div class="settings-row-text">
+                    <span class="settings-row-title">开机自启</span>
+                    <span class="settings-row-sub">登录 Windows 后自动运行 WePChat</span>
+                  </div>
+                  <button type="button" class="switch" id="general-autostart" aria-pressed="false" title="开机自启"></button>
+                </div>
+                <div class="settings-row">
+                  <div class="settings-row-text">
+                    <span class="settings-row-title">自启后进托盘</span>
+                    <span class="settings-row-sub">开机自启时不弹主窗口（需先开启托盘与开机自启）</span>
+                  </div>
+                  <button type="button" class="switch" id="general-start-minimized" aria-pressed="false" title="自启后进托盘"></button>
+                </div>
+              </div>
+              <p class="settings-note" id="general-status"></p>
+            </div>
+
+            <div class="settings-page" data-settings-page="chat">
+              <h2 class="settings-h">对话</h2>
+              <p class="settings-p">全局对话默认值，对所有供应商生效；留空跟随各自默认。改动自动保存。</p>
+              <div class="settings-card settings-card--stack">
+                <label class="field">
+                  <span class="field-label">默认系统提示词</span>
+                  <textarea id="chat-system-prompt" class="field-input" rows="5" placeholder="留空 = 不注入系统提示词"></textarea>
+                </label>
+                <label class="field">
+                  <span class="field-label">温度（0 – 2，留空 = 默认）</span>
+                  <input type="number" id="chat-temperature" class="field-input mono num-field" min="0" max="2" step="0.1" placeholder="默认" />
+                </label>
+                <label class="field" style="margin-bottom:0">
+                  <span class="field-label">最大输出 tokens（留空 = 默认）</span>
+                  <input type="number" id="chat-max-tokens" class="field-input mono num-field" min="1" step="1" placeholder="默认" />
+                </label>
+              </div>
+              <p class="settings-note" id="chat-defaults-status"></p>
+            </div>
+
+            <div class="settings-page" data-settings-page="providers">
               <div class="settings-title-row">
                 <div>
                   <h2 class="settings-h">模型与供应商</h2>
@@ -460,20 +534,29 @@
               </p>
               <label class="field">
                 <span class="field-label">当前生效根目录</span>
-                <input type="text" id="workspace-resolved" readonly class="field-input mono" />
+                <div class="path-field">
+                  <input type="text" id="workspace-resolved" readonly class="field-input mono" />
+                  <button type="button" class="secondary-btn path-btn" id="btn-open-workspace-root" title="在资源管理器中打开">打开</button>
+                </div>
               </label>
               <label class="field">
                 <span class="field-label">自定义根目录（可选）</span>
-                <input
-                  type="text"
-                  id="workspace-custom"
-                  class="field-input mono"
-                  placeholder="留空 = 使用默认"
-                />
+                <div class="path-field">
+                  <input
+                    type="text"
+                    id="workspace-custom"
+                    class="field-input mono"
+                    placeholder="留空 = 使用默认"
+                  />
+                  <button type="button" class="secondary-btn path-btn" id="btn-browse-workspace" title="选择目录">浏览…</button>
+                </div>
               </label>
               <label class="field">
                 <span class="field-label">当前会话工作区</span>
-                <input type="text" id="workspace-session-path" readonly class="field-input mono" />
+                <div class="path-field">
+                  <input type="text" id="workspace-session-path" readonly class="field-input mono" />
+                  <button type="button" class="secondary-btn path-btn" id="btn-open-session-workspace" title="在资源管理器中打开">打开</button>
+                </div>
               </label>
               <div class="field-actions">
                 <button type="button" class="primary-btn" id="btn-save-workspace">保存</button>
@@ -590,51 +673,66 @@
                 </div>
               </div>
               <h3 class="settings-subh">支持的 Agent</h3>
-              <div class="settings-card external-agent-list" id="external-agent-list">
-                <div class="settings-row external-agent-row" data-agent-kind="codex">
-                  <div class="settings-row-text">
-                    <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="codex" aria-hidden="true"></span>Codex</span>
-                    <span class="settings-row-sub" id="external-codex-status">未检测 · 目标协议：JSON-RPC</span>
+              <div class="external-agent-list" id="external-agent-list">
+                <div class="settings-card external-agent-card" data-agent-kind="codex">
+                  <div class="settings-row external-agent-row">
+                    <div class="settings-row-text">
+                      <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="codex" aria-hidden="true"></span>Codex</span>
+                      <span class="settings-row-sub" id="external-codex-status">未检测 · 目标协议：JSON-RPC</span>
+                    </div>
+                    <div class="external-agent-controls">
+                      <button type="button" class="secondary-btn" data-external-detect="codex">检测</button>
+                      <button type="button" class="switch" id="external-codex-enabled" aria-pressed="false" title="启用 Codex"></button>
+                    </div>
                   </div>
-                  <div class="external-agent-controls">
-                    <button type="button" class="secondary-btn" data-external-detect="codex">检测</button>
-                    <button type="button" class="switch" id="external-codex-enabled" aria-pressed="false" title="启用 Codex"></button>
-                  </div>
+                  <label class="field external-agent-path">
+                    <span class="field-label">Codex CLI 路径（可选）</span>
+                    <div class="path-field">
+                      <input type="text" id="external-codex-path" class="field-input mono" placeholder="留空则从 PATH 检测 codex" />
+                      <button type="button" class="secondary-btn path-btn" data-external-browse="codex" title="选择 CLI 文件">浏览…</button>
+                    </div>
+                  </label>
                 </div>
-                <label class="field external-agent-path">
-                  <span class="field-label">Codex CLI 路径（可选）</span>
-                  <input type="text" id="external-codex-path" class="field-input mono" placeholder="留空则从 PATH 检测 codex" />
-                </label>
 
-                <div class="settings-row external-agent-row" data-agent-kind="claude">
-                  <div class="settings-row-text">
-                    <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="claude" aria-hidden="true"></span>Claude Code</span>
-                    <span class="settings-row-sub" id="external-claude-status">未检测 · 目标协议：CLI</span>
+                <div class="settings-card external-agent-card" data-agent-kind="claude">
+                  <div class="settings-row external-agent-row">
+                    <div class="settings-row-text">
+                      <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="claude" aria-hidden="true"></span>Claude Code</span>
+                      <span class="settings-row-sub" id="external-claude-status">未检测 · 目标协议：CLI</span>
+                    </div>
+                    <div class="external-agent-controls">
+                      <button type="button" class="secondary-btn" data-external-detect="claude">检测</button>
+                      <button type="button" class="switch" id="external-claude-enabled" aria-pressed="false" title="启用 Claude Code"></button>
+                    </div>
                   </div>
-                  <div class="external-agent-controls">
-                    <button type="button" class="secondary-btn" data-external-detect="claude">检测</button>
-                    <button type="button" class="switch" id="external-claude-enabled" aria-pressed="false" title="启用 Claude Code"></button>
-                  </div>
+                  <label class="field external-agent-path">
+                    <span class="field-label">Claude CLI 路径（可选）</span>
+                    <div class="path-field">
+                      <input type="text" id="external-claude-path" class="field-input mono" placeholder="留空则从 PATH 检测 claude" />
+                      <button type="button" class="secondary-btn path-btn" data-external-browse="claude" title="选择 CLI 文件">浏览…</button>
+                    </div>
+                  </label>
                 </div>
-                <label class="field external-agent-path">
-                  <span class="field-label">Claude CLI 路径（可选）</span>
-                  <input type="text" id="external-claude-path" class="field-input mono" placeholder="留空则从 PATH 检测 claude" />
-                </label>
 
-                <div class="settings-row external-agent-row" data-agent-kind="pi">
-                  <div class="settings-row-text">
-                    <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="pi" aria-hidden="true"></span>Pi</span>
-                    <span class="settings-row-sub" id="external-pi-status">未检测 · 目标协议：JSON-RPC</span>
+                <div class="settings-card external-agent-card" data-agent-kind="pi">
+                  <div class="settings-row external-agent-row">
+                    <div class="settings-row-text">
+                      <span class="settings-row-title external-settings-agent-title"><span class="external-brand-mark" data-agent-brand="pi" aria-hidden="true"></span>Pi</span>
+                      <span class="settings-row-sub" id="external-pi-status">未检测 · 目标协议：JSON-RPC</span>
+                    </div>
+                    <div class="external-agent-controls">
+                      <button type="button" class="secondary-btn" data-external-detect="pi">检测</button>
+                      <button type="button" class="switch" id="external-pi-enabled" aria-pressed="false" title="启用 Pi"></button>
+                    </div>
                   </div>
-                  <div class="external-agent-controls">
-                    <button type="button" class="secondary-btn" data-external-detect="pi">检测</button>
-                    <button type="button" class="switch" id="external-pi-enabled" aria-pressed="false" title="启用 Pi"></button>
-                  </div>
+                  <label class="field external-agent-path">
+                    <span class="field-label">Pi CLI 路径（可选）</span>
+                    <div class="path-field">
+                      <input type="text" id="external-pi-path" class="field-input mono" placeholder="留空则从 PATH 检测 pi" />
+                      <button type="button" class="secondary-btn path-btn" data-external-browse="pi" title="选择 CLI 文件">浏览…</button>
+                    </div>
+                  </label>
                 </div>
-                <label class="field external-agent-path">
-                  <span class="field-label">Pi CLI 路径（可选）</span>
-                  <input type="text" id="external-pi-path" class="field-input mono" placeholder="留空则从 PATH 检测 pi" />
-                </label>
               </div>
               <div class="field-actions">
                 <button type="button" class="primary-btn" id="btn-save-external">保存</button>
@@ -748,8 +846,44 @@
 
             <div class="settings-page" data-settings-page="about">
               <h2 class="settings-h">关于</h2>
-              <p class="settings-p" id="about-meta">WePChat</p>
-              <p class="settings-p muted">桌面版舒适聊天盒子 · 不是 Codex / Claude Code</p>
+              <div class="settings-card about-card">
+                <div class="about-head">
+                  <div class="about-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg>
+                  </div>
+                  <div class="about-title">
+                    <strong>WePChat</strong>
+                    <span class="about-version" id="about-meta">WePChat</span>
+                    <span class="about-sub">桌面版舒适聊天盒子 · 安卓端版本独立演进（tag 前缀 win-v）</span>
+                  </div>
+                </div>
+                <div class="about-actions">
+                  <button type="button" class="secondary-btn" id="btn-about-github">GitHub 仓库</button>
+                  <button type="button" class="secondary-btn" id="btn-about-issues">反馈问题</button>
+                  <button type="button" class="primary-btn" id="btn-check-update">检查更新</button>
+                </div>
+              </div>
+
+              <div class="settings-card update-card" id="update-card" hidden>
+                <div class="update-head">
+                  <span class="settings-row-title" id="update-title">检查更新</span>
+                  <span class="settings-row-sub" id="update-sub"></span>
+                </div>
+                <div class="update-notes" id="update-notes" hidden></div>
+                <div class="update-progress" id="update-progress" hidden>
+                  <div class="update-progress-bar"><i id="update-progress-fill"></i></div>
+                  <span class="update-progress-text" id="update-progress-text">0%</span>
+                </div>
+                <div class="update-actions" id="update-actions" hidden></div>
+              </div>
+
+              <details class="about-oss">
+                <summary>开源组件</summary>
+                <p class="settings-p muted">
+                  Tauri · marked · DOMPurify · highlight.js · KaTeX · xterm.js ·
+                  reqwest · rusqlite · portable-pty · sha2
+                </p>
+              </details>
             </div>
           </div>
         </section>
@@ -979,6 +1113,7 @@
     </dialog>
 
     <div class="context-menu" id="context-menu" hidden></div>
+    <div class="context-menu" id="external-session-menu" hidden></div>
 
     <script src="./libs/marked.min.js"></script>
     <script src="./libs/purify.min.js"></script>
