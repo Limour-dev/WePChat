@@ -580,8 +580,12 @@
           <span class="row-label">技能与 MCP<span class="rl-sub">技能、服务与扩展能力</span></span>
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
         </button>
+        <button class="row setting-entry" @click="pushPage('settings-remote')">
+          <span class="setting-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="20" cy="17" r="1.5"/></svg></span>
+          <span class="row-label">远程配置<span class="rl-sub">从服务器获取默认配置</span></span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
         <button class="row setting-entry" @click="pushPage('settings-data')">
-          <span class="setting-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c0 2 3.6 3.5 8 3.5S20 9 20 7s-3.6-3.5-8-3.5S4 5 4 7z"/><path d="M4 7v10c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V7"/><path d="M4 12c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5"/></svg></span>
           <span class="row-label">数据<span class="rl-sub">总览、备份与存储管理</span></span>
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
         </button>
@@ -887,6 +891,36 @@
         </button>
       </div>
       <div class="hint">已用本地存储约 {{ U.fmtSize(storageUsed) }}</div>
+    </div>
+  </div>
+
+  <div class="page" v-if="pageIs('settings-remote')">
+    <div class="page-head">
+      <button class="icon-btn" @click="closePage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="page-title">远程配置</div>
+    </div>
+    <div class="page-body">
+      <div class="sec-label">服务器地址</div>
+      <div class="card">
+        <div class="row static">
+          <span class="row-label">默认配置 URL<span class="rl-sub">返回 JSON 配置对象的服务器地址</span></span>
+        </div>
+        <div class="row static">
+          <input type="url" v-model="settings.remoteConfigUrl" placeholder="https://example.com/wepchat-config.json" @change="persistSettings()" autocapitalize="off" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <button class="big-btn plain" :disabled="remoteConfigBusy" @click="fetchRemoteConfig()">
+        {{ remoteConfigBusy ? '获取中…' : '从服务器获取默认配置' }}
+      </button>
+
+      <div class="sec-label">配置内容<span class="rl-sub">所有配置项均可修改，JSON 格式</span></div>
+      <div class="card">
+        <textarea class="textarea-block code-editor-area" v-model="settings.remoteConfigJson" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="在此粘贴或编辑配置 JSON…"></textarea>
+      </div>
+      <button class="big-btn plain" :disabled="remoteConfigBusy" @click="applyRemoteConfigAsDefaults()">应用为默认配置</button>
+      <button class="big-btn plain" @click="resetRemoteConfigJson()">载入当前配置</button>
+      <button class="big-btn plain" @click="resetSettingsDefaults()">恢复默认设置</button>
+      <div class="hint">应用后会把配置内容合并写入本地设置（JSON），并可选应用 providers 提供商（API 地址 / Key / 接口类型）。获取时会自动剥离 // 与 /* */ 注释，可直接使用 JSONC 模板。API Key 等敏感信息请勿放入公共配置。</div>
     </div>
   </div>
 

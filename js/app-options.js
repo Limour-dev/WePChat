@@ -22,6 +22,7 @@
         appVersionLoaded: false,
         appVersionLoading: false,
         settings,
+        remoteConfigBusy: false,
         providers,
         index,
         session: normalizeSession(first || Store.newSession()),

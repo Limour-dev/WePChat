@@ -78,6 +78,123 @@
         this.storageUsed = Store.usage();
         this.applyTheme();
       },
+      stripJsonComments(src) {
+        src = String(src || '');
+        let out = '', inString = false, i = 0;
+        while (i < src.length) {
+          const ch = src[i], next = src[i + 1];
+          if (inString) {
+            out += ch;
+            if (ch === '\\') { out += next || ''; i += 2; continue; }
+            if (ch === '"') inString = false;
+            i++;
+            continue;
+          }
+          if (ch === '"') { inString = true; out += ch; i++; continue; }
+          if (ch === '/' && next === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
+          if (ch === '/' && next === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; continue; }
+          out += ch;
+          i++;
+        }
+        return out;
+      },
+      fetchRemoteConfig() {
+        const url = String(this.settings.remoteConfigUrl || '').trim();
+        if (!url) {
+          U.toast('请先填写默认配置 URL');
+          return;
+        }
+        if (this.remoteConfigBusy) return;
+        this.remoteConfigBusy = true;
+        return new Promise(resolve => {
+          const xhr = new XMLHttpRequest();
+          try { xhr.open('GET', url, true); } catch (e) {
+            this.remoteConfigBusy = false;
+            U.toast('URL 无效');
+            resolve();
+            return;
+          }
+          xhr.timeout = 15000;
+          xhr.setRequestHeader('Accept', 'application/json');
+          xhr.onload = () => {
+            this.remoteConfigBusy = false;
+            if (xhr.status < 200 || xhr.status >= 300) {
+              U.toast('获取失败：HTTP ' + xhr.status);
+              resolve();
+              return;
+            }
+            const raw = xhr.responseText || '';
+            try {
+              const cleaned = this.stripJsonComments(raw);
+              const parsed = JSON.parse(cleaned);
+              if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not-object');
+              this.settings.remoteConfigJson = JSON.stringify(parsed, null, 2);
+              this.persistSettings();
+              U.toast('已获取配置，请检查后应用');
+            } catch (e) {
+              U.toast('服务器返回的不是有效 JSON 配置');
+            }
+            resolve();
+          };
+          xhr.onerror = () => { this.remoteConfigBusy = false; U.toast('网络错误，获取失败'); resolve(); };
+          xhr.ontimeout = () => { this.remoteConfigBusy = false; U.toast('获取超时'); resolve(); };
+          xhr.send();
+        });
+      },
+      applyRemoteConfigAsDefaults() {
+        const text = String(this.settings.remoteConfigJson || '').trim();
+        if (!text) {
+          U.toast('配置内容为空');
+          return;
+        }
+        let parsed;
+        try {
+          parsed = JSON.parse(this.stripJsonComments(text));
+        } catch (e) {
+          U.toast('配置 JSON 格式错误');
+          return;
+        }
+        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          U.toast('配置必须是 JSON 对象');
+          return;
+        }
+        const base = Store.defaultSettings();
+        const merged = Object.assign({}, base, this.settings, parsed);
+        merged.realGlassEnabled = parsed.realGlassEnabled === true;
+        merged.onboardingCompleted = parsed.onboardingCompleted === true;
+        merged.appLock = Object.assign({}, base.appLock, parsed.appLock || {});
+        merged.toolPermissions = Object.assign({}, base.toolPermissions, parsed.toolPermissions || {});
+        Object.keys(this.settings).forEach(k => { if (!(k in base) && !(k in parsed)) delete merged[k]; });
+        this.settings = merged;
+        this.persistSettings();
+
+        if (Array.isArray(parsed.providers)) {
+          const current = this.providers || Store.loadProviders();
+          const incoming = parsed.providers.map(p => MODEL_META.normalizeProvider(p)).filter(Boolean);
+          incoming.forEach(p => {
+            p.id = String(p.id || '').trim() || U.uuid();
+            p.models = Array.isArray(p.models) && p.models.length ? p.models : ['gpt-4o-mini'];
+            p.imageModels = Array.isArray(p.imageModels) ? p.imageModels : [];
+            const i = current.findIndex(x => x.id === p.id);
+            if (i >= 0) current[i] = p; else current.push(p);
+          });
+          this.providers = current;
+          this.persistProviders();
+        }
+
+        U.toast('配置已应用');
+      },
+      resetRemoteConfigJson() {
+        this.settings.remoteConfigJson = JSON.stringify(this.settings, null, 2);
+      },
+      resetSettingsDefaults() {
+        const base = Store.defaultSettings();
+        base.remoteConfigUrl = this.settings.remoteConfigUrl;
+        base.remoteConfigJson = '';
+        this.settings = base;
+        this.persistSettings();
+        U.toast('已恢复默认设置');
+      },
       refreshAppVersion(opts) {
         opts = opts || {};
         if (this.appVersionLoading && this._appVersionPromise) return this._appVersionPromise;

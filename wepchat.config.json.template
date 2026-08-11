@@ -1,0 +1,128 @@
+/*
+ * WepChat 远程默认配置模板
+ * =====================================================================
+ * 用法：
+ *   1. 直接复制本文件为 wepchat.config.json（去掉 .template 后缀）放到服务器，无需去除注释
+ *   2. 在 WepChat 设置 → 远程配置 → 默认配置 URL 填入该文件地址
+ *   3. 点击「从服务器获取默认配置」，检查后点击「应用为默认配置」
+ *
+ * 说明：
+ *   - 本文件是带注释的模板（JSONC 风格），便于阅读每一项配置的含义。
+ *   - 应用获取时会自动剥离 // 行注释与块注释后再解析，因此服务器上可直接使用带注释的 JSONC 文件。
+ *   - 所有配置项均可省略，未提供的项会沿用本地当前值或内置默认值。
+ *   - 请勿把 API Key 等敏感信息放进公共配置。
+ * =====================================================================
+ */
+{
+  /* —— 外观 —— */
+  "theme": "auto",            // 主题 auto(跟随系统) | light(浅色) | dark(深色)
+  "themeStyle": "graphite",   // 主题样式 graphite | warm-paper | nebula | clear-glass
+  "realGlassEnabled": false,  // 是否启用真实玻璃组件（false=常规毛玻璃，老设备更流畅）
+  "fontSize": "normal",       // 字号 normal(标准) | large(大)
+
+  /* —— 会话与应用模式 —— */
+  "appMode": "chat",          // 默认会话模式 chat(常规对话) | image(生图)
+
+  /* —— 模型提供 —— */
+  "activeProviderId": "",     // 默认提供商 id（留空自动选第一个）
+  "activeModel": "",          // 默认模型 id（留空自动选第一个模型）
+
+  /* —— 模型提供商（API 地址 / Key / 接口类型） —— */
+  "providers": [
+    {
+      "id": "my-openai",          // 提供商 id（唯一标识，用于 activeProviderId / imageProviderId）
+      "name": "OpenAI 兼容",       // 显示名称
+      "api": "openai-chat",        // 接口类型：
+      //            openai-chat       = Chat Completions（OpenAI 兼容）
+      //            openai-responses  = Responses（OpenAI）
+      //            anthropic        = Messages（Anthropic）
+      //            openai-completions= Completions（传统补全）
+      "baseUrl": "https://api.openai.com", // API 地址；留空自动补 /v1；以 # 结尾按原样使用
+      "apiKey": "sk-...",          // API Key（敏感，请勿放公共配置）
+      "models": ["gpt-4o-mini"],  // 文本模型列表
+      "imageModels": ["gpt-image-1", "gpt-image-2"], // 生图模型列表（可省略）
+      "imageBaseUrl": "",          // 图像 API 地址，留空复用 API 地址
+      "imageApiKey": "",           // 图像 API Key，留空复用 API Key
+      "imageEndpointPath": "",     // 生图路径覆盖，如 /v1/images/generations
+      "imageEditEndpointPath": "", // 图片编辑路径覆盖，如 /v1/images/edits
+      "extraHeaders": [],           // 附加请求头，[{name, value}, ...]
+      "modelMeta": {},              // 模型能力元数据（可选）
+      "imageModelMeta": {}          // 生图模型能力元数据（可选）
+    }
+  ],
+
+  /* —— Agent 工具 —— */
+  "agentEnabled": true,       // 是否给模型配置工具
+  "maxToolRounds": 8,         // 最大工具轮次（每轮可含多个工具调用）
+  "maxToolCalls": 24,         // 最大工具调用数
+
+  /* —— 工具 / 网页访问权限 —— */
+  "webFetch": "ask",          // 网页访问 ask | always | never（历史兼容字段）
+  "toolPermissions": {
+    "run_js": "ask",          // JavaScript 沙盒 ask | always | never
+    "files": "ask",           // 工作区文件 ask | always | never
+    "delete_files": "ask",    // 删除工作区文件/文件夹 ask | never
+    "services": "ask",        // 工作区服务 ask | always | never
+    "web_fetch": "ask",       // 网页访问 ask | always | never
+    "image_go": "ask"         // 图片生成（常规模式转交生图）ask | always | never
+  },
+
+  /* —— 对话参数 —— */
+  "systemPrompt": "",         // 全局 System Prompt，留空不发送
+  "temperature": null,        // 温度 null(不传) | 0 ~ 2
+  "maxTokens": null,          // 最大输出 tokens null(默认) | 数值
+
+  /* —— 图片生成 —— */
+  "imageProviderId": "",      // 生图提供商 id（留空自动选）
+  "imageModel": "",           // 生图模型 id（留空自动选择）
+  "imageEditModel": "",       // 图片编辑模型 id（留空跟随生成模型）
+  "imageDefaultSize": "auto", // 默认尺寸 auto | 1024x1024 | 1536x864 | 864x1536 | 2048x2048 | 2560x1440 | 1440x2560 | 3840x2160 | 2160x3840 | 2880x2880
+  "imageQuality": "auto",     // 质量 auto | high | medium | low
+  "imageBackground": "auto",  // 背景 auto | transparent | opaque
+  "imageDefaultCount": 1,     // 默认生成数量 1~8
+  "imageOutputFormat": "png", // 输出格式 png | webp | jpeg
+  "imagePermission": "ask",   // 图片生成权限 ask | always | never
+  "imageStylePresetId": "",   // 默认风格预设 id（留空无预设）
+  "imageApiMode": "images",   // 图像 API 模式 images | auto | chat | responses
+  "imageEndpointPath": "",    // 生图路径覆盖，如 /v1/images/generations
+  "imageEditEndpointPath": "",// 图片编辑路径覆盖，如 /v1/images/edits
+  "imageStylePresets": [      // 风格预设列表
+    {
+      "id": "cinematic-realistic",
+      "name": "电影感写实",
+      "prompt": "Cinematic realistic photography, natural light, subtle film grain, rich but controlled color grading, soft shadows, professional composition, high detail."
+    },
+    {
+      "id": "commerce-hero",
+      "name": "电商主图",
+      "prompt": "Clean commercial product photography, premium studio lighting, crisp edges, realistic materials, neutral background, catalog-ready composition, high detail."
+    },
+    {
+      "id": "anime-illustration",
+      "name": "动漫插画",
+      "prompt": "Polished anime illustration style, expressive character design, clean line art, soft cel shading, luminous color accents, detailed atmosphere."
+    },
+    {
+      "id": "flat-icon",
+      "name": "扁平图标",
+      "prompt": "Modern flat vector icon style, geometric shapes, simple silhouette, balanced negative space, clean edges, limited color palette, app-icon ready."
+    },
+    {
+      "id": "minimal-ui",
+      "name": "极简 UI",
+      "prompt": "Minimal modern UI visual style, clean hierarchy, generous spacing, precise alignment, neutral surfaces, subtle accents, crisp readable details."
+    },
+    {
+      "id": "watercolor",
+      "name": "水彩手绘",
+      "prompt": "Soft watercolor illustration, gentle paper texture, translucent layered pigments, delicate brush edges, airy composition, calm natural color palette."
+    }
+  ],
+
+  /* —— 更新检查 —— */
+  "updateAutoCheck": false,   // 启动时自动检查 GitHub Release
+
+  /* —— 远程配置（可留空，由应用填写） —— */
+  "remoteConfigUrl": "wepchat.config.json", // 本次配置自己的服务器地址（默认指向同目录 wepchat.config.json）
+  "remoteConfigJson": ""      // 应用内编辑的配置 JSON 文本（通常不留）
+}

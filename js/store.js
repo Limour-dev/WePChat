@@ -182,8 +182,10 @@ const Store = {
       systemPrompt: '',
       temperature: null,             // null = 不传
       maxTokens: null,
-      fontSize: 'normal'             // normal | large
-    };
+	fontSize: 'normal',            // normal | large
+	remoteConfigUrl: 'wepchat.config.json', // 远程默认配置 JSON 的服务器地址（默认指向同目录 wepchat.config.json）
+	remoteConfigJson: ''           // 远程配置的 JSON 文本（可编辑，应用后写入设置）
+	};
   },
 
   _get(key, fallback) {

@@ -867,6 +867,11 @@ html.plus-app .page-head { padding-top: 6px; }
   width: 100%; background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
   padding: 12px 14px; font-size: 14.5px; min-height: 88px; resize: vertical; line-height: 1.55;
 }
+.code-editor-area {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; min-height: 260px; line-height: 1.5; white-space: pre;
+  overflow: auto;
+}
 .image-workbench .card { border-radius: 14px; }
 .image-wb-prompt {
   margin-top: 10px; min-height: 112px; resize: none;

@@ -37,7 +37,7 @@ WePChat 是一个本地优先的轻量移动端 AI 聊天应用，当前以静�
 - 数据备份使用 `.wepchat` ZIP 容器导入导出，另支持单文件导出和整工作区 ZIP 导出。
 - Android/HBuilderX 环境下支持相册保存、系统分享、公共下载目录写入、从设置打开导出目录（失败时显示并复制路径）和后台运行通知提醒。
 - 关于页可检查 GitHub Release，展示更新日志并跳转到 Releases 页面；不会自动下载或安装更新。
-
+- 远程默认配置：可从服务器拉取 JSON 配置作为默认设置，支持 API 地址 / Key / 接口类型与各配置项，获取时自动剥离注释（JSONC）。
 ## 截图
 <div align="center">
 
@@ -90,11 +90,15 @@ WePChat 内置 Agent 工具是受控的轻量工具集，不提供真实 shell�
 
 ## 本地运行
 
-项目是静态页面，直接启动一个静态服务器即可预览：
+项目是静态页面，直接启动一个静态服务器即可预览。
+
+推荐使用项目自带的 CORS 静态服务器（为跨域请求添加 `Access-Control-Allow-Origin` 等头，避免远程配置拉取被浏览器 / WebView 拦截）：
 
 ```bash
-python -m http.server 8765
+python3 server.py 8765
 ```
+
+> 若只用 `python -m http.server 8765` 预览页面本身也可以，但**拉取远程默认配置会报 CORS 跨域错误**。
 
 然后打开：
 
@@ -102,31 +106,15 @@ python -m http.server 8765
 http://127.0.0.1:8765/
 ```
 
-也可以使用任意静态服务器。部分 Android/HTML5+ 能力只在 HBuilderX App 环境中可用，浏览器环境会降级为普通 H5 行为。
+### 远程默认配置
 
-## Android 打包
+从服务器拉取 JSON 配置作为应用默认设置，带注释的 JSONC 会在获取时自动剥离注释后再解析。
 
-使用 HBuilderX 打开项目目录，按 `manifest.json` 配置打包 Android App。
-
-当前 `manifest.json` 中已配置常用权限，包括文件、相册、分享、压缩、网络、语音、通知等。不同 Android 版本和 ROM 对公共下载目录、相册保存、系统分享和后台行为的限制不同，实机回归仍然必要。
-
-## 发布与更新
-
-Release tag 使用：
-
-```text
-vX.Y.Z
-```
-
-仓库地址：
-
-```text
-https://github.com/WEP-56/WePChat
-```
-
-应用内关于页会请求 GitHub latest release，比对本地版本 tag 与最新 release tag，并展示更新日志和跳转链接。自动检查默认关闭；开启后每次启动静默检查。无法连接 GitHub 时不会弹错误提示。
-
-当前只做版本检查、更新日志展示和跳转，不做 APK 自动下载或安装。
+- 配置模板：`wepchat.config.json.template`（含全部配置项与注释说明）。
+- 实际使用：复制为 `wepchat.config.json`（去掉 `.template` 后缀，该文件已加入 `.gitignore`）放到服务器，无需去除注释。
+- 在应用 设置 → 远程配置 填入配置 URL 并「获取 → 应用」。
+- 支持配置 API 地址 / Key / 接口类型（`providers` 数组）及各设置项。
+- 启动带 CORS 的服务器后，默认 URL 可填 `http://127.0.0.1:8765/wepchat.config.json`。
 
 ## 设计取舍
 
