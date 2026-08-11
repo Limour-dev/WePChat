@@ -406,6 +406,13 @@
         let totalToolCalls = 0;
         const previousToolResults = [];
         const usageTotals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, source: '' };
+        // assistantMsg.content 由 smoothText 逐字动画显示；多轮工具调用时每个 step 的
+        // onUpdate.st.content 是该 step 的完整正文（非增量），这里用 lastSeenLen 追增量累计成
+        // 完整正文，避免后一轮覆盖前一轮、正文丢失。
+        let accumulatedContent = '';
+        let accumulatedReasoning = '';
+        let stepSeenLen = 0;
+        let stepSeenReasoningLen = 0;
         const addUsage = usage => {
           if (!usage) return;
           usageTotals.inputTokens += Number(usage.inputTokens) || 0;
@@ -426,8 +433,13 @@
               requestKey: NetStability.idempotencyKey('chat-' + assistantMsg.id + '-' + step),
               onStatus: info => this.connectionStatus(Object.assign({ source: '模型提供商' }, info || {})),
               onUpdate: st => {
-                smoothText(this, assistantMsg, st.content || '');
-                assistantMsg.reasoning = st.reasoning || '';
+                // st.content / st.reasoning 是本 step 的完整正文；追增量拼入累计正文
+                const sc = st.content || '';
+                if (sc.length > stepSeenLen) { accumulatedContent += sc.slice(stepSeenLen); stepSeenLen = sc.length; }
+                const sr = st.reasoning || '';
+                if (sr.length > stepSeenReasoningLen) { accumulatedReasoning += sr.slice(stepSeenReasoningLen); stepSeenReasoningLen = sr.length; }
+                smoothText(this, assistantMsg, accumulatedContent);
+                assistantMsg.reasoning = accumulatedReasoning;
                 if (st.streamTools && st.streamTools.length) syncStreamToolCalls(assistantMsg, st.streamTools, step);
                 assistantMsg.status = 'streaming';
                 if (assistantMsg.variants && assistantMsg.variants.length) this.syncActiveAssistantVariant(assistantMsg);
@@ -435,9 +447,16 @@
               }
             });
 
-            smoothText(this, assistantMsg, result.content || assistantMsg.content || '');
-            assistantMsg.reasoning = result.reasoning || assistantMsg.reasoning || '';
+            // 兜底：若当前 step 的完整正文还没被 onUpdate 累计（如整体返回 JSON），补上
+            const rc = result.content || '';
+            if (rc.length > stepSeenLen) { accumulatedContent += rc.slice(stepSeenLen); stepSeenLen = rc.length; }
+            const rr = result.reasoning || '';
+            if (rr.length > stepSeenReasoningLen) { accumulatedReasoning += rr.slice(stepSeenReasoningLen); stepSeenReasoningLen = rr.length; }
+            smoothText(this, assistantMsg, accumulatedContent);
+            assistantMsg.reasoning = accumulatedReasoning;
             addUsage(result.usage);
+            stepSeenLen = 0;
+            stepSeenReasoningLen = 0;
 
             if (this.stopRequested) {
               cancelStreamToolCalls(assistantMsg, step);
@@ -468,7 +487,7 @@
             const displayCalls = finalizeStreamToolCalls(assistantMsg, rawCalls, step);
             workingMessages.push({
               role: 'assistant',
-              content: result.content || '',
+              content: accumulatedContent || result.content || '',
               toolCalls: rawCalls.map((t, idx) => ({
                 id: t.id || displayCalls[idx].id,
                 name: t.name,
