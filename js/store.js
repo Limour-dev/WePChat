@@ -177,8 +177,6 @@ const Store = {
       imageEndpointPath: '',         // optional override, e.g. /v1/images/generations
       imageEditEndpointPath: '',     // optional override, e.g. /v1/images/edits
       appMode: 'chat',               // chat | image
-      remoteHosts: [],
-      activeRemoteHostId: '',
       maxToolRounds: 8,
       maxToolCalls: 24,
       systemPrompt: '',
@@ -246,8 +244,6 @@ const Store = {
     out.appLock = Object.assign({}, d.appLock, saved.appLock || {});
     out.appLock.enabled = out.appLock.enabled === true && !!out.appLock.salt && !!out.appLock.hash;
     out.toolPermissions = Object.assign({}, d.toolPermissions, saved.toolPermissions || {});
-    out.remoteHosts = Array.isArray(saved.remoteHosts) ? saved.remoteHosts : [];
-    out.activeRemoteHostId = saved.activeRemoteHostId || '';
     if (saved.webFetch && !(saved.toolPermissions && saved.toolPermissions.web_fetch)) {
       out.toolPermissions.web_fetch = saved.webFetch;
     }
@@ -278,8 +274,7 @@ const Store = {
       title: '',
       createdAt: U.now(),
       updatedAt: U.now(),
-      mode: 'chat',    // chat | image | remote
-      remote: null,
+      mode: 'chat',    // chat | image
       providerId: '',
       model: '',
       draft: { input: '', attachments: [] },
@@ -389,7 +384,6 @@ const Store = {
         createdAt: sess.createdAt,
         updatedAt: sess.updatedAt,
         mode: sess.mode,
-        remote: sess.remote,
         providerId: sess.providerId,
         model: sess.model,
         messages: stripMessageImages(sess.messages || [])

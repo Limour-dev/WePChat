@@ -7,8 +7,7 @@
 - 应用启动与 Vue 挂载；
 - 通用数据清洗、路径、版本、流式工具调用等辅助函数；
 - Vue 的 `data`、`computed` 和生命周期；
-- 应用设置、远程主机、会话、模型提供商、图片生成、远程对话、工作区、预览及数据管理等全部 methods。
-
+- 应用设置、会话、模型提供商、图片生成、工作区、预览及数据管理等全部 methods。
 本次拆分的首要目标是让任何新文件都不超过 1,000 行，同时保持现有 HBuilderX + Vue 全局脚本的运行方式，不引入 npm 打包、ES Module 转换或框架升级。
 
 拆分完成后，`js/app.js` 只负责：
@@ -32,10 +31,8 @@
 | --- | --- | ---: |
 | `js/app-helpers.js` | 会话规范化、文件/路径、版本、文本流、工具调用流等共享函数 | 约 520 行 |
 | `js/app-options.js` | Vue `data`、`computed`、`mounted` | 约 600 行 |
-| `js/app-methods-core.js` | Plus 生命周期、设置、更新、主题、模式、远程主机与远程工作区选择 | 约 900 行 |
-| `js/app-methods-sessions.js` | 对话框、会话管理、导出、模型提供商、消息展示与编辑 | 约 620 行 |
-| `js/app-methods-generation.js` | 请求设置、图片生成、远程事件/审批/消息、普通聊天生成 | 约 950 行 |
-| `js/app-methods-workspace.js` | 输入与滚动、附件、工作区文件、查看器、浏览与导出、JS 运行 | 约 820 行 |
+| `js/app-methods-core.js` | Plus 生命周期、设置、更新、主题、模式 | 约 900 行 |
+| `js/app-methods-generation.js` | 请求设置、图片生成、普通聊天生成 | 约 950 行 |
 | `js/app-methods-preview.js` | 服务、预览、桥接消息、备份导入导出与清空数据 | 约 350 行 |
 | `js/app.js` | Store 初始化、methods 合并、Vue 挂载 | 少于 40 行 |
 
@@ -93,7 +90,6 @@ methods 的边界以现有方法为单位切割，不拆开单个方法。若实
 - 新建、切换、重命名和删除会话；
 - 提供商设置与普通聊天发送；
 - 图片生成入口；
-- 远程 Host、工作区和线程恢复入口；
 - 工作区文件查看、编辑、运行与预览；
 - Android `plusready`、返回键、前后台持久化相关生命周期；
 - 数据导入导出。
@@ -138,7 +134,6 @@ methods 的边界以现有方法为单位切割，不拆开单个方法。若实
 - 初次拆分前后 methods 均为 239 个，无遗漏或重名；后续稳定性与备份功能使当前 methods 增至 248 个；
 - 隔离装配测试确认 Vue 收到 `data`、`computed`、`mounted` 和完整 methods，并挂载到 `#app`；
 - 本地静态服务器真实浏览器检查通过，首页完成 Vue 渲染，8 个 app 脚本均按计划加载，控制台无 error/warning；
-- `npm --prefix .\wepchat-host run check` 通过；
 - `git diff --check` 通过。
 
 尚需在 HBuilderX/Android 实机上回归 `plusready`、系统返回键、前后台切换、文件/相册/分享和通知等 `plus.*` 能力；普通浏览器不会提供这些原生接口。

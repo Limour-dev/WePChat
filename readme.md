@@ -12,20 +12,16 @@
 
 WePChat 是一个本地优先的轻量移动端 AI 聊天应用，当前以静态 Vue/H5 为主体，按 HBuilderX / HTML5+ Android App 方向推进。
 
-项目目标是做一个克制、快速、适合日常使用的 LLM 客户端：对话、Markdown 阅读、文件工作区、轻量代码/网页生成、图片生成与编辑，以及在手机上远程驱动桌面 Codex 处理本机项目。它不是 ComfyUI、Midjourney 或移动开发环境，也不追求内置完整 Linux。
-
+项目目标是做一个克制、快速、适合日常使用的 LLM 客户端：对话、Markdown 阅读、文件工作区、轻量代码/网页生成、图片生成与编辑。它不是 ComfyUI、Midjourney 或移动开发环境，也不追求内置完整 Linux。
 
 这个项目的初衷是，Cherry Studio / Chatbox 已经过于沉重，不适合我的使用场景了，我得做个简单点。所以 WePChat 适合这些场景：
 - 日常问答
 - 想法快速验证：WePChat 支持编写 HTML 并预览，以及简单的 JavaScript 代码运行
 - 测试模型连通性：WePChat 支持 OpenAI 的 Completions / Responses 接口，支持 Anthropic 的 Messages 接口。配置简单，模型切换方便，可以快速验证连通性
 - 日常快速生图：WePChat 支持 OpenAI 的图像生成 / 图像编辑
-- 移动端远控 Codex：手机 App 通过局域网连接电脑上的 `wepchat-host`，让桌面 Codex 在指定项目里读代码、改文件、跑命令，并把输出和审批回传到手机端
-
 ## 当前能力
 
 - 多会话管理，支持常规对话和生图会话。
-- 远程 Codex 会话，通过 `wepchat-host` 在局域网内连接桌面 Codex，并操作已注册的本机工作区。
 - 多模型提供商配置，支持 OpenAI-compatible、Responses、Completions、Messages 等常见接口形态。
 - 模型元数据管理，记录上下文、输出上限、视觉、工具、结构化输出、图像生成/编辑等能力。
 - Markdown 渲染、代码块复制、链接打开、图片展示。
@@ -37,8 +33,6 @@ WePChat 是一个本地优先的轻量移动端 AI 聊天应用，当前以静�
 - HTML 多页面预览，支持工作区内相对链接跳转、地址栏、前进、后退、刷新和外链跳转。
 - 图片生成工作台，支持尺寸、质量、格式、背景和风格预设。
 - 常规对话中的 `image_go` 工具，可由文本模型判断是否需要转交图片模型。
-- 远控模式下支持 Codex 线程创建/恢复、流式消息、命令输出、文件 diff 展示、停止生成和移动端审批。
-- 模型与远程 Codex 链路提供可见错误码、五次重连、WebSocket 心跳、事件补播和断线续接。
 - 图片生成支持长任务等待、异步任务轮询、大图下载重试与“只取结果、不重新扣费”的恢复入口。
 - 数据备份使用 `.wepchat` ZIP 容器导入导出，另支持单文件导出和整工作区 ZIP 导出。
 - Android/HBuilderX 环境下支持相册保存、系统分享、公共下载目录写入、从设置打开导出目录（失败时显示并复制路径）和后台运行通知提醒。
@@ -66,7 +60,7 @@ WePChat 是一个本地优先的轻量移动端 AI 聊天应用，当前以静�
 
 ## 技术路线
 
-WePChat 当前是静态前端项目，并带有一个可选的桌面 host 适配器：
+WePChat 当前是静态前端项目：
 
 - 入口：`index.html`
 - 样式：`css/app.css`
@@ -74,69 +68,14 @@ WePChat 当前是静态前端项目，并带有一个可选的桌面 host 适配
 - 模型 API：`js/api.js`
 - 图片 API：`js/image-api.js`
 - Agent 工具：`js/tools/`（独立工具模块）与 `js/tools.js`（兼容门面）
-- 远控客户端：`js/remote-api.js`、`js/remote-scan.js`
 - 本地存储：`js/store.js`
 - 通用能力：`js/util.js`
 - HBuilderX 配置：`manifest.json`
-- 桌面远控 host：`wepchat-host/`
-
 核心运行方式是 H5 + HTML5+。Android App 侧能力依赖 HBuilderX/HTML5+ 的 `plus.*` API，例如文件、相册、分享、压缩、通知和外部浏览器打开。
-
-## 远控模式 / wepchat-host
-
-`wepchat-host` 是 WePChat 的桌面侧局域网桥接器，用来让手机端 WePChat 控制电脑上的 Codex。当前这次与你对话、读取项目并更新 README 的流程，就是这种“手机 App -> 局域网 host -> 桌面 Codex -> 本机项目”的使用方式。
-
-基本链路：
-
-```text
-WePChat Android/H5
-  -> HTTP/WebSocket + token
-wepchat-host
-  -> stdio JSON-RPC
-codex app-server
-  -> 本机 repo、shell、git、Codex 配置和 Codex 会话
-```
-
-手机端不会直接连接 `codex app-server`。`wepchat-host` 负责鉴权、工作区白名单、协议翻译、事件转发和审批路由。
-
-当前远控模式支持：
-
-- Host 管理：添加、编辑、删除、测试局域网内的 `wepchat-host`。
-- 配对方式：粘贴 host 输出的地址和 token；APK 环境下可扫码连接。
-- 工作区选择：只允许选择 host 已注册的目录，手机端不会向 Codex 传任意本机路径。
-- Codex 会话：创建线程、恢复线程、发送 turn、停止 turn、读取/列出线程。
-- 桌面工作区文件：远程模式可读取 host 当前工作区的文件列表，点击文件会把相对路径插入输入框。
-- 图片输入：远程模式可从手机选择图片，并随 turn 一起发送给桌面 Codex。
-- 流式回传：模型消息、工具项状态、命令输出、文件 diff 和 turn 生命周期会实时显示到手机端。
-- 审批转发：Codex 需要执行命令或确认文件改动时，审批会显示在手机端，由用户接受或拒绝。
-
-从当前仓库根目录启动 host：
-
-```powershell
-cd E:\wepchat\wepchat
-npm --prefix .\wepchat-host install
-node .\wepchat-host\bin\wepchat-host.js --lan
-```
-
-或显式注册多个工作区：
-
-```bash
-wepchat-host --lan --workspace E:\wepchat\wepchat --workspace D:\projects\foo
-```
-
-默认监听 `127.0.0.1:8797`；加 `--lan` 后监听局域网地址，手机才能访问。启动后终端会打印带 token 的配对 URL 和二维码，手机端可以在“远程 Codex”设置里扫码或粘贴。host 会自动生成 token 并持久化到：
-
-```text
-~/.wepchat-host/config.json
-```
-
-更多 host 侧协议、API 和安全模型见 `wepchat-host/README.md`。
 
 ## Agent 工具边界
 
 WePChat 内置 Agent 工具是受控的轻量工具集，不提供真实 shell、Node.js 包管理器、Python 环境或完整 Linux。
-
-远控模式是另一条能力边界：命令、文件修改和 git 操作由桌面 Codex 在 host 注册的本机工作区里完成，并沿用 Codex 自身的 sandbox 与 approval policy。手机端只通过 `wepchat-host` 发送协议消息和处理审批。
 
 当前模型可见工具包括：
 
@@ -194,7 +133,7 @@ https://github.com/WEP-56/WePChat
 WePChat 刻意保持轻量：
 
 - 不内置完整 Linux。
-- 常规聊天不提供真实 shell；需要项目级操作时交给远控模式里的桌面 Codex。
+- 常规聊天不提供真实 shell。
 - 不做长期后台执行承诺。
 - 不把图片生成做成重型工作站。
 - 不把 HTML 预览做成完整浏览器。

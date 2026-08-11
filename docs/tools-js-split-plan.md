@@ -141,4 +141,4 @@ tools/registry.js
 - 写入、读取、编辑、移动、存在性检查、删除、`run_js`、历史服务工具、图片别名和网络禁用行为测试通过；
 - 全部项目 JavaScript 文件通过 `node --check`；
 - 本地浏览器完成 Vue 页面渲染，20 个工具相关脚本进入页面加载链，控制台无 error/warning；
-- `npm --prefix .\wepchat-host run check` 与 `git diff --check` 通过。
+- `git diff --check` 通过。

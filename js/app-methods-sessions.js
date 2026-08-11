@@ -128,22 +128,13 @@
           buttons: [
             { text: '取消', value: null },
             { text: '常规', value: 'chat', style: 'primary' },
-            { text: '生图', value: 'image', style: 'primary' },
-            { text: '远程', value: 'remote', style: 'primary' }
+            { text: '生图', value: 'image', style: 'primary' }
           ]
         });
         if (!mode) return;
-        const remote = mode === 'remote' ? await this.prepareRemoteSession() : null;
-        if (mode === 'remote' && !remote) return;
-        const historyMessages = remote && remote._historyMessages || [];
-        if (remote) delete remote._historyMessages;
         this.session = Store.newSession();
-        this.session.mode = mode === 'image' ? 'image' : (mode === 'remote' ? 'remote' : 'chat');
-        this.session.remote = remote;
-        if (historyMessages.length) this.session.messages = historyMessages;
-        if (remote) this.session.title = '远程：' + (remote.workspaceName || 'Codex');
+        this.session.mode = mode === 'image' ? 'image' : 'chat';
         this.session.providerId = this.settings.activeProviderId || '';
-        this.session.model = this.settings.activeModel || '';
         this.persistSession();
         this.restoreSessionDraft();
         this.drawerOpen = false;
@@ -746,12 +737,7 @@
           list_services: '列出预览',
           web_fetch: '抓取网页',
           image_go: '图片生成',
-          image_generation: '图片生成',
-          codex_command: 'Codex 命令',
-          codex_file_change: 'Codex 文件变更',
-          codex_reasoning: 'Codex 思考',
-          codex_approval: 'Codex 授权',
-          codex_item: 'Codex 事件'
+          image_generation: '图片生成'
         };
         return map[name] || name || '工具';
       },
@@ -763,17 +749,8 @@
           return {};
         }
       },
-      isRemoteTool(t) {
-        return /^codex_/i.test(String(t && t.name || ''));
-      },
       shouldDisplayToolCall(t) {
         if (!t) return false;
-        const name = String(t.name || '');
-        if (name === 'codex_item' || name === 'codex_reasoning') return false;
-        if (name === 'codex_file_change') {
-          const args = this.toolArgObject(t);
-          return !!(t.result || args.path || args.file || args.summary || args.files || args.changes || args.diff);
-        }
         return true;
       },
       displayToolCalls(m) {
@@ -782,29 +759,7 @@
       toolTitle(t) {
         const name = String(t && t.name || '');
         const args = this.toolArgObject(t);
-        if (name === 'codex_command') {
-          const cmd = String(args.command || args.cmd || args.commandLine || '').replace(/\s+/g, ' ').trim();
-          return cmd ? ('命令 · ' + U.truncate(cmd, 34)) : 'Codex 命令';
-        }
-        if (name === 'codex_file_change') {
-          const firstFile = Array.isArray(args.files) ? args.files[0] : '';
-          const label = String(args.path || args.file || firstFile || args.summary || '').trim();
-          return label ? ('文件变更 · ' + U.truncate(label, 32)) : 'Codex 文件变更';
-        }
-        if (name === 'codex_approval') {
-          const subject = String(args.command || args.path || args.kind || '').replace(/\s+/g, ' ').trim();
-          return subject ? ('授权 · ' + U.truncate(subject, 34)) : 'Codex 授权';
-        }
         return this.toolLabel(name);
-      },
-      prettyJson(v) {
-        if (v == null) return '';
-        try {
-          const obj = typeof v === 'string' ? JSON.parse(v) : v;
-          return JSON.stringify(obj, null, 2);
-        } catch (e) {
-          return String(v);
-        }
       },
       isDiffResult(text) {
         return /(^|\n)--- .+\n\+\+\+ .+\n@@/.test(String(text || ''));
@@ -907,7 +862,7 @@
       },
       canRegenerateMessage(i) {
         const m = this.session.messages[i];
-        if (!m || m.role !== 'assistant' || this.appMode === 'remote') return false;
+        if (!m || m.role !== 'assistant') return false;
         const later = this.session.messages.slice(i + 1).some(x => x.role === 'user' || x.role === 'assistant');
         const count = Array.isArray(m.variants) && m.variants.length ? m.variants.length : 1;
         return !later && count < 6;
@@ -931,10 +886,6 @@
       },
       async regenerate(i) {
         if (this.generating) return;
-        if (this.appMode === 'remote') {
-          U.toast('远程会话暂不支持重新生成');
-          return;
-        }
         const m = this.session.messages[i];
         if (!m || m.role !== 'assistant') return;
         const later = this.session.messages.slice(i + 1).some(x => x.role === 'user' || x.role === 'assistant');

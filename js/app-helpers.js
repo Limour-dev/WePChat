@@ -48,8 +48,7 @@
     sess.files = sess.files || {};
     sess.folders = Array.isArray(sess.folders) ? sess.folders : [];
     sess.services = Array.isArray(sess.services) ? sess.services : [];
-    sess.mode = sess.mode === 'image' ? 'image' : (sess.mode === 'remote' ? 'remote' : 'chat');
-    sess.remote = sess.remote || null;
+    sess.mode = sess.mode === 'image' ? 'image' : 'chat';
     sess.createdAt = sess.createdAt || U.now();
     sess.updatedAt = sess.updatedAt || U.now();
     sess.title = sess.title || '';

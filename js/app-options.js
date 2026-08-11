@@ -14,8 +14,6 @@
       return {
         U,
         API,
-        RemoteAPI,
-        RemoteScan,
         MODEL_META,
         themeStyles: WepChatThemeSystem.styles,
         appVersion: '',
@@ -53,16 +51,6 @@
           max: 0,
           progress: ''
         },
-        connectionNoticeTimer: null,
-        remoteRuntime: {
-          client: null,
-          assistantId: '',
-          messageIds: [],
-          threadId: '',
-          turnId: '',
-          resolveTurn: null,
-          rejectTurn: null
-        },
         stopRequested: false,
         showScrollDown: false,
         autoFollow: true,
@@ -94,17 +82,6 @@
           testing: false,
           modelTests: {},
           modelTestMessages: {}
-        },
-        remoteForm: {
-          testingHostId: '',
-          loadingHostId: '',
-          workspacesHostId: '',
-          workspaces: [],
-          filesHostId: '',
-          filesWorkspaceId: '',
-          files: [],
-          filesTruncated: false,
-          loadingFiles: false
         },
 
         viewer: {
@@ -187,35 +164,9 @@
         if (!this.currentProvider) return '未配置模型';
         return this.currentModelId || '默认模型';
       },
-      remoteHosts() {
-        return (Array.isArray(this.settings.remoteHosts) ? this.settings.remoteHosts : [])
-          .map(h => RemoteAPI.normalizeHost(h))
-          .filter(h => h.baseUrl);
-      },
-      activeRemoteHost() {
-        const id = this.settings.activeRemoteHostId;
-        return this.remoteHosts.find(h => h.id === id) || this.remoteHosts[0] || null;
-      },
-      remoteSessionHost() {
-        const r = this.session && this.session.remote || {};
-        return r.hostId ? (this.remoteHosts.find(h => h.id === r.hostId) || null) : this.activeRemoteHost;
-      },
-      remoteWorkspaceName() {
-        const r = this.session && this.session.remote || {};
-        return r.workspaceName || r.workspacePath || '未选择工作区';
-      },
       topModelLabel() {
         if (this.appMode === 'image') return this.imageModelId || '未配置生图模型';
-        if (this.appMode === 'remote') return this.remoteWorkspaceName;
         return this.currentModelLabel;
-      },
-      topProviderLabel() {
-        if (this.appMode === 'image') return this.imageProvider && this.imageProvider.name || '图片生成';
-        if (this.appMode === 'remote') {
-          const h = this.remoteSessionHost;
-          return h ? ('远程 Codex · ' + h.name) : '远程 Codex';
-        }
-        return this.currentProvider && this.currentProvider.name || '';
       },
       currentModelMeta() {
         return this.currentProvider ? providerModelMeta(this.currentProvider, this.currentModelId) : null;
@@ -225,25 +176,18 @@
       },
       appMode() {
         if (this.session && this.session.mode === 'image') return 'image';
-        if (this.session && this.session.mode === 'remote') return 'remote';
         return 'chat';
       },
       composerPlaceholder() {
         if (this.appMode === 'image') return '描述你想生成的图片';
-        if (this.appMode === 'remote') return '让桌面 Codex 在当前项目里做什么';
         return '有问题，尽管问';
       },
       emptyTitle() {
         if (this.appMode === 'image') return '描述一张图片';
-        if (this.appMode === 'remote') return '连接桌面 Codex';
         return '有问题，尽管问';
       },
       emptySub() {
         if (this.appMode === 'image') return this.imageModelId || '未配置生图模型';
-        if (this.appMode === 'remote') {
-          const r = this.session && this.session.remote || {};
-          return r.workspacePath || r.workspaceName || '先在设置里添加 WepChat Host';
-        }
         return this.currentModelLabel;
       },
       imageProvider() {
@@ -384,9 +328,6 @@
       fileCount() {
         return Object.keys(this.session.files || {}).length;
       },
-      remoteFileCount() {
-        return (this.remoteForm.files || []).filter(x => x && x.type === 'file').length;
-      },
       folderCount() {
         const files = this.session.files || {};
         const folders = new Set(this.session.folders || []);
@@ -421,8 +362,8 @@
           return {
             id: sess.id,
             title: sess.title || '新聊天',
-            mode: sess.mode === 'image' ? 'image' : (sess.mode === 'remote' ? 'remote' : 'chat'),
-            modeLabel: sess.mode === 'image' ? '生图' : (sess.mode === 'remote' ? '远程' : '常规'),
+            mode: sess.mode === 'image' ? 'image' : 'chat',
+            modeLabel: sess.mode === 'image' ? '生图' : '常规',
             updatedAt: sess.updatedAt || meta.updatedAt || sess.createdAt || 0,
             createdAt: sess.createdAt || meta.createdAt || 0,
             pinned: !!(sess.pinned || meta.pinned),
@@ -507,60 +448,6 @@
         walk('', 0);
         return rows;
       },
-      remoteWorkspaceRows() {
-        const entries = Array.isArray(this.remoteForm.files) ? this.remoteForm.files : [];
-        const children = new Map();
-        const push = (parent, item) => {
-          const list = children.get(parent) || [];
-          list.push(item);
-          children.set(parent, list);
-        };
-        const folders = new Set();
-        entries.forEach(item => {
-          const rawPath = String(item && item.path || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-          if (!rawPath) return;
-          const parts = rawPath.split('/');
-          for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join('/'));
-          if (item.type === 'folder') folders.add(rawPath);
-        });
-        folders.forEach(path => {
-          const parts = path.split('/');
-          push(parts.slice(0, -1).join('/'), { type: 'folder', path, name: parts[parts.length - 1] });
-        });
-        entries.forEach(item => {
-          if (!item || item.type !== 'file') return;
-          const rawPath = String(item.path || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-          if (!rawPath) return;
-          const parts = rawPath.split('/');
-          const file = { size: Number(item.size) || 0, mtime: Number(item.mtime) || 0, mime: workspaceMime(rawPath) };
-          push(parts.slice(0, -1).join('/'), {
-            type: 'file',
-            path: rawPath,
-            name: parts[parts.length - 1],
-            file,
-            kind: this.fileKind(rawPath, file)
-          });
-        });
-
-        const rows = [];
-        const walk = (parent, depth) => {
-          const list = (children.get(parent) || []).slice().sort((a, b) => {
-            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-            return a.name.localeCompare(b.name, 'zh-Hans');
-          });
-          list.forEach(item => {
-            if (item.type === 'folder') {
-              const open = this.isFolderOpen(item.path);
-              rows.push(Object.assign({}, item, { depth, open, childCount: (children.get(item.path) || []).length }));
-              if (open) walk(item.path, depth + 1);
-            } else {
-              rows.push(Object.assign({}, item, { depth }));
-            }
-          });
-        };
-        walk('', 0);
-        return rows;
-      },
       viewerTabs() {
         if (!this.viewer.name) return [];
         if (this.viewer.isImage) return [{ id: 'view', label: '预览' }];
@@ -602,9 +489,6 @@
       },
       canSend() {
         if (this.branchBlocked) return false;
-        if (this.appMode === 'remote') {
-          return !this.generating && (!!this.input.trim() || (this.attachments || []).some(a => a.kind === 'image'));
-        }
         return !this.generating && (!!this.input.trim() || this.attachments.length > 0);
       },
       globalSearchResults() {
