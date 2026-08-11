@@ -3,7 +3,7 @@
 
 (() => {
   const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } };
-  const { nextTick, clone, cleanTitle, normalizeSession, newProvider, parseModels, modelsText, imageModelsText, providerModelMeta, tokenMessageText, imageExtForMime, imageFileName, attachmentFileName, fileSafeName, normalizeWorkspacePath, parentFolder, ensureParentFolders, workspaceMime, workspaceExt, isHtmlName, isMarkdownName, isImageName, isJsName, RELEASES_URL, LATEST_RELEASE_API, normalizeAppVersion, appTag, parseReleaseTag, compareReleaseTags, formatReleaseDate, fetchLatestRelease, plusRuntimeVersion, manifestVersion, normalizeStylePreset, isEditableName, languageForName, resolveWorkspaceRef, dataUrlDownload, readPickedFile, escapeScriptEnd, isExternalRef, externalWebUrl, normalizeRef, htmlAttr, TextTargets, TextTimers, TextResolvers, resolveTyping, smoothText, waitSmoothText, streamToolKey, findToolDisplay, syncStreamToolCalls, clearStreamState, finalizeStreamToolCalls, discardStreamToolCalls, cancelStreamToolCalls } = window.WepChatAppHelpers;
+  const { nextTick, clone, cleanTitle, normalizeSession, newProvider, parseModels, modelsText, imageModelsText, providerModelMeta, tokenMessageText, imageExtForMime, imageFileName, attachmentFileName, fileSafeName, normalizeWorkspacePath, parentFolder, ensureParentFolders, workspaceMime, workspaceExt, isHtmlName, isMarkdownName, isImageName, isJsName, RELEASES_URL, LATEST_RELEASE_API, normalizeAppVersion, appTag, parseReleaseTag, compareReleaseTags, formatReleaseDate, fetchLatestRelease, plusRuntimeVersion, manifestVersion, normalizeStylePreset, isEditableName, languageForName, resolveWorkspaceRef, dataUrlDownload, readPickedFile, escapeScriptEnd, isExternalRef, externalWebUrl, normalizeRef, htmlAttr, TextTargets, TextTimers, TextResolvers, resolveTyping, smoothText, waitSmoothText, streamToolKey, findToolDisplay, syncStreamToolCalls, syncReasoning, finalizeReasoning, clearStreamState, finalizeStreamToolCalls, discardStreamToolCalls, cancelStreamToolCalls } = window.WepChatAppHelpers;
   window.WepChatAppMethodsGeneration = {
       settingsForRequest(tools) {
         const s = Object.assign({}, this.settings);
@@ -365,7 +365,7 @@
           if (!assistantMsg || assistantMsg.role !== 'assistant') return;
           const variants = this.ensureAssistantVariants(assistantMsg);
           const nextVariant = this.snapshotAssistantVariant({
-            content: '', reasoning: '', toolCalls: [], previews: [], images: [], imageRecovery: null,
+            content: '', reasoning: '', reasonings: [], toolCalls: [], previews: [], images: [], imageRecovery: null,
             error: '', usage: null, model, createdAt: U.now(), status: 'streaming'
           }, U.uuid());
           variants.push(nextVariant);
@@ -414,6 +414,7 @@
         // 完整正文，避免后一轮覆盖前一轮、正文丢失。
         let accumulatedContent = '';
         let accumulatedReasoning = '';
+        let currentStepReasoning = '';
         let stepSeenLen = 0;
         let stepSeenReasoningLen = 0;
         let updateEventCount = 0;
@@ -444,7 +445,15 @@
                 const sc = st.content || '';
                 if (sc.length > stepSeenLen) { accumulatedContent += sc.slice(stepSeenLen); stepSeenLen = sc.length; }
                 const sr = st.reasoning || '';
-                if (sr.length > stepSeenReasoningLen) { accumulatedReasoning += sr.slice(stepSeenReasoningLen); stepSeenReasoningLen = sr.length; }
+                if (sr.length > stepSeenReasoningLen) {
+                  const delta = sr.slice(stepSeenReasoningLen);
+                  currentStepReasoning += delta;
+                  accumulatedReasoning += delta;
+                  stepSeenReasoningLen = sr.length;
+                }
+                if (currentStepReasoning) {
+                  syncReasoning(assistantMsg, step, currentStepReasoning);
+                }
                 const nowLog = Date.now();
                 if (updateEventCount === 1 || updateEventCount % 50 === 0 || nowLog - lastUpdateLogAt >= 1000) {
                   lastUpdateLogAt = nowLog;
@@ -463,13 +472,20 @@
             const rc = result.content || '';
             if (rc.length > stepSeenLen) { accumulatedContent += rc.slice(stepSeenLen); stepSeenLen = rc.length; }
             const rr = result.reasoning || '';
-            if (rr.length > stepSeenReasoningLen) { accumulatedReasoning += rr.slice(stepSeenReasoningLen); stepSeenReasoningLen = rr.length; }
+            if (rr.length > stepSeenReasoningLen) {
+              const delta = rr.slice(stepSeenReasoningLen);
+              currentStepReasoning += delta;
+              accumulatedReasoning += delta;
+              stepSeenReasoningLen = rr.length;
+            }
             smoothText(this, assistantMsg, accumulatedContent);
             assistantMsg.reasoning = accumulatedReasoning;
+            finalizeReasoning(assistantMsg, step, currentStepReasoning);
             addUsage(result.usage);
             L.info('Gen', 'step=' + step + ' result: contentLen=' + (result.content || '').length + ' toolCalls=' + (result.toolCalls || []).length + ' usage=' + JSON.stringify(result.usage || {}));
             stepSeenLen = 0;
             stepSeenReasoningLen = 0;
+            currentStepReasoning = '';
             if (this.stopRequested) {
               cancelStreamToolCalls(assistantMsg, step);
               break;
@@ -557,6 +573,7 @@
           }
         } finally {
           await waitSmoothText(assistantMsg);
+          (assistantMsg.reasonings || []).forEach(r => { if (r && r.status === 'streaming') r.status = 'done'; });
           if (!assistantMsg.usage && (assistantMsg.content || assistantMsg.reasoning)) {
             const estimated = MODEL_META.estimateTokens(tokenMessageText(assistantMsg));
             assistantMsg.usage = { inputTokens: 0, outputTokens: estimated, totalTokens: estimated, source: 'estimate' };

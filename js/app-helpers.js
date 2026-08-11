@@ -480,8 +480,39 @@
     });
   }
 
+  function syncReasoning(msg, step, text) {
+    if (!msg || step == null || !text) return;
+    const list = msg.reasonings || (msg.reasonings = []);
+    const key = 'reasoning_step_' + step;
+    let r = list.find(x => x && x._key === key);
+    if (!r) {
+      r = { id: key, seq: list.length + 1, text: '', status: 'streaming', _open: true, _key: key, _streamStep: step };
+      list.push(r);
+    }
+    r.text = text;
+    r.status = 'streaming';
+    if (typeof r._open !== 'boolean') r._open = true;
+    r._streamStep = step;
+    return r;
+  }
+
+  function finalizeReasoning(msg, step, text) {
+    if (!msg) return;
+    const list = msg.reasonings || [];
+    const key = 'reasoning_step_' + step;
+    let r = list.find(x => x && x._key === key);
+    if (!r && text) {
+      r = { id: key, seq: list.length + 1, text: '', status: 'done', _open: true, _key: key, _streamStep: step };
+      list.push(r);
+    }
+    if (r) {
+      r.text = text || r.text || '';
+      r.status = 'done';
+      delete r._streamStep;
+    }
+  }
+
   function clearStreamState(t) {
-    delete t._streaming;
     delete t._streamKey;
     delete t._streamStep;
     return t;
@@ -591,6 +622,8 @@
     streamToolKey,
     findToolDisplay,
     syncStreamToolCalls,
+    syncReasoning,
+    finalizeReasoning,
     clearStreamState,
     finalizeStreamToolCalls,
     discardStreamToolCalls,

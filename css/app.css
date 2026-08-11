@@ -435,6 +435,18 @@ html[data-theme="clear-glass"] .msg-user .bubble { border: 1px solid var(--borde
   margin: 10px 0; overflow: hidden; background: var(--bg2);
   font-size: 13.5px;
 }
+
+/* 思考过程卡片 */
+.reasoning-card { border-left: 2.5px solid #8b5cf6; }
+.reasoning-card .tool-ic { background: rgba(139, 92, 246, 0.12); }
+.reasoning-card .tool-ic svg { color: #8b5cf6; }
+html.dark .reasoning-card { border-left-color: #a78bfa; }
+html.dark .reasoning-card .tool-ic svg { color: #a78bfa; }
+.reasoning-card .reasoning-body {
+  color: var(--text2); white-space: pre-wrap; word-break: break-word;
+  max-height: 320px; overflow-y: auto; user-select: text; -webkit-user-select: text;
+  font-size: 13px; line-height: 1.6;
+}
 .tool-head {
   display: flex; align-items: center; gap: 9px; padding: 11px 13px; width: 100%; text-align: left;
 }

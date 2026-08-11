@@ -194,13 +194,20 @@
             </template>
 
             <template v-else-if="m.role === 'assistant'">
-              <!-- 思考过程 -->
-              <div v-if="m.reasoning">
-                <button class="reasoning-toggle" :class="{open: m._showReasoning}" @click="m._showReasoning = !m._showReasoning">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
-                  {{ m.status === 'streaming' && !m.content ? '思考中…' : '思考过程' }}
+              <!-- 思考过程卡片 -->
+              <div v-for="r in displayReasonings(m)" :key="r.id" class="tool-card reasoning-card">
+                <button class="tool-head" @click="r._open = !r._open">
+                  <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3A5.5 5.5 0 0 0 4 8.5c0 1.6.7 3 1.8 4L4 15l2.7-.7a5.5 5.5 0 1 0 2.8-11.3z"/><path d="M12 8v4M12 15.5v.5"/></svg></span>
+                  <span class="tool-name">思考过程{{ (m.reasonings && m.reasonings.length > 1) ? ' ' + r.seq : '' }}</span>
+                  <span class="tool-status">
+                    <span class="spinner" v-if="r.status === 'streaming'"></span>
+                    <template v-if="r.status === 'streaming'">思考中</template>
+                    <template v-else>完成</template>
+                  </span>
                 </button>
-                <div class="reasoning" v-if="m._showReasoning"><div class="reasoning-body">{{ m.reasoning }}</div></div>
+                <div class="tool-body" v-if="r._open">
+                  <div class="reasoning-body">{{ r.text }}</div>
+                </div>
               </div>
 
               <!-- 工具调用 -->
@@ -257,7 +264,7 @@
                   </div>
                 </div>
               </div>
-              <span class="typing-dot" v-if="m.status === 'streaming' && !m.content && !m.reasoning && !displayToolCalls(m).length && !(m.images && m.images.length) && !(m.previews && m.previews.length)"></span>
+              <span class="typing-dot" v-if="m.status === 'streaming' && !m.content && !m.reasoning && !displayToolCalls(m).length && !displayReasonings(m).length && !(m.images && m.images.length) && !(m.previews && m.previews.length)"></span>
 
               <div class="err-box" v-if="m.error">{{ m.error }}<button class="err-retry" @click="regenerate(mi)">重试</button></div>
 

@@ -769,6 +769,9 @@
       displayToolCalls(m) {
         return (m && m.toolCalls || []).filter(t => this.shouldDisplayToolCall(t));
       },
+      displayReasonings(m) {
+        return (m && Array.isArray(m.reasonings) ? m.reasonings : []).filter(r => r && r.text);
+      },
       toolTitle(t) {
         const name = String(t && t.name || '');
         const args = this.toolArgObject(t);
@@ -808,6 +811,7 @@
           id: id || U.uuid(),
           content: String(m.content || ''),
           reasoning: String(m.reasoning || ''),
+          reasonings: clone(Array.isArray(m.reasonings) ? m.reasonings : []),
           toolCalls: clone(Array.isArray(m.toolCalls) ? m.toolCalls : []),
           previews: clone(Array.isArray(m.previews) ? m.previews : []),
           images: clone(Array.isArray(m.images) ? m.images : []),
@@ -849,6 +853,7 @@
         m.activeVariantIndex = idx;
         m.content = v.content || '';
         m.reasoning = v.reasoning || '';
+        m.reasonings = clone(Array.isArray(v.reasonings) ? v.reasonings : []);
         m.toolCalls = clone(v.toolCalls || []);
         m.previews = clone(v.previews || []);
         m.images = clone(v.images || []);

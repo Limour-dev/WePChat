@@ -62,8 +62,8 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 | `app-methods-core.js` | 应用设置、plus 初始化、返回键、版本/更新检查、远程默认配置拉取与应用 |
 | `app-methods-sessions.js` | 会话管理 |
 | `app-methods-workspace.js` | 工作区：文件树、新建/上传/编辑/删除/导出、HTML 预览 |
-| `app-methods-generation.js` | 文本/图片生成流程 |
-| `app-methods-preview.js` | 多页面 HTML 预览（地址栏、前进/后退、刷新） |
+| `app-methods-generation.js` | 文本/图片生成流程（多轮工具调用、流式正文累计、思考/工具卡片） |
+| `app-helpers.js` | 共享纯函数：`smoothText` 逐字动画（按积压比例揭示）、`syncReasoning`/`finalizeReasoning` 思考卡片、`syncStreamToolCalls`/`finalizeStreamToolCalls` 工具卡片、variant 快照等 |
 | `app-methods-theme.js` | 主题 |
 | `app-methods-onboarding.js` | 首次引导 |
 | `app-methods-lock.js` | 应用锁 |
@@ -83,6 +83,14 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 - `anthropic`（Messages，含工具调用）
 - `openai-completions`（传统补全，无工具）
 
+统一增量输出 `onUpdate({ content, reasoning, streamTools, usage })`：
+- `content`：当前 step 的**完整**正文（非增量，由调用方用 `lastSeenLen` 追增量累计）
+- `reasoning`：当前 step 的**完整**思考内容（thinking / reasoning delta）
+- `streamTools`：流式工具调用（参数增量中，`input_json_delta`）
+- API 层只做事件解析与累计，**不碰 UI**；渲染/动画完全由应用层（§3.9）负责
+
+> 注意：推理模型（如 deepseek-v4-flash）可能**大部分 SSE 事件都是 thinking delta，正文 content 为空**——
+> 这会导致纯文本区域长时间无更新，需要思考卡片（§3.9）来呈现实时进度。
 ### 3.6 Agent 工具（`js/tools/`）
 - `registry.js`：注册表 + 公共限制（`MAX_FILE` 512KB、`MAX_FILES` 50、`MAX_SERVICES` 5、`JS_TIMEOUT` 8s、`WEB_FETCH_TIMEOUT` 20s 等）。
 - `workspace.js`：路径安全校验、工作区共享能力。
@@ -106,7 +114,27 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 - **超长截断**：>300 字符的字符串自动截断，避免 base64 图片数据刷屏。
 - **计时辅助**：`const end = WLog.time('API'); ... end('done')` 输出耗时。
 - **覆盖模块**：`api.js`（SSE/HTTP）、`store.js`（IndexedDB/localStorage）、`network-stability.js`（重试）、`app-methods-generation.js`（生成流程/工具调用）、`image-api.js`（图片生成降级）、`tools/registry.js`（工具执行）、`util.js`（文件操作）、`app-methods-sessions.js`（会话切换）。
+- **流式诊断标签**：`[SSE]`（api.js 每 100 事件）、`[Stream]`（onUpdate 每 50 事件或 1s）、`[Smooth]`（smoothText 动画 start/commit/done）、`[Render]`（renderMd 流式渲染每 500ms）。用于定位"流式期间 UI 不更新"类问题：分别确认事件到达、内容累计、消息对象写入、Vue 重渲染四层。
 - **加载顺序**：在 `index.html` 中位于第三方库之后、所有业务脚本之前，确保全局可用。
+
+### 3.9 流式渲染管线（思考卡片 + smoothText 动画）
+聊天生成的流式数据从 SSE 到 DOM 分四层，任何一层卡住都会表现为"SSE 期间 UI 不更新、结束后才慢慢滚动"：
+
+1. **API 层（`api.js`）**：`sseRequest` 用 XHR `onprogress` 增量解析 `data:` 行，按事件类型累计到 `st` 并回调 `onUpdate`。
+2. **生成层（`app-methods-generation.js` `generateAssistant`）**：
+   - `accumulatedContent` / `accumulatedReasoning` 跨 step 累计（`lastSeenLen` 追增量，避免多轮工具调用覆盖正文）；
+   - `currentStepReasoning` 按 step 独立追踪，供思考卡片使用；
+   - 每事件调用 `smoothText()`（正文动画）与 `syncReasoning()`（思考卡片实时更新）+ `syncStreamToolCalls()`（工具卡参数增量）。
+3. **动画层（`app-helpers.js` `smoothText`）**：`setInterval(24ms)` 按**积压比例**揭示正文：
+   - `step = max(1, min(60, ceil(rest/10)))`：积压越大揭示越快，流式速率高时保持 ~20-35 字符小积压，结束后 ~0.5s 排空；
+   - 旧实现按固定档位（1-12 字符/24ms）揭示，流式快时积压越来越大，表现为"结束后才慢慢滚动"。
+4. **渲染层（Vue 模板 `index.html`）**：每条 assistant 消息包含：
+   - **思考卡片**（`m.reasonings`，每 step 一张，`displayReasonings(m)` 渲染）：默认展开、紫色左边框、状态"思考中（spinner）/ 完成"，文字随 SSE 实时增长；
+   - **工具调用卡片**（`m.toolCalls`，`displayToolCalls(m)` 渲染）：composing/running/done 状态；
+   - **正文**（`m.content`，`renderMd(m)` 渲染）：`v-html` markdown，由 smoothText 逐字揭示。
+
+> 推理模型（如 deepseek-v4-flash）常把大部分 SSE 事件用于 thinking delta，正文 content 为空；
+> 若没有思考卡片，用户会看到"思考中…"长时间无变化，误以为卡死。
 
 ## 4. 手机端文档（`docs/`）
 - `app-js-split-plan.md` / `tools-js-split-plan.md`：历史重构（拆分 app.js / tools.js）的设计与实施记录。
@@ -146,3 +174,6 @@ cp wepchat.config.json.template wepchat.config.json
 1. 手机端是**普通 `<script>` 全局脚本**，新增文件要按 §3.1 顺序插入 `index.html`，并挂到正确的 `window` 命名空间。
 2. 新增脚本必须插在正确位置；`tools.js` 门面依赖 `WepChatTools` 已完整加载，`app.js` 依赖所有 `app-methods-*` 已挂到 `window`。
 3. 新增关键路径代码应使用 `WLog`（§3.8）添加埋点日志，避免直接使用 `console.log`；涉及敏感对象的日志由 WLog 自动脱敏。
+4. 流式渲染链路（§3.9）四层：`api.js` SSE 解析 → `generateAssistant` 累计 → `smoothText` 动画 → Vue 模板。排查"流式期间 UI 不更新"时按 `[SSE]/[Stream]/[Smooth]/[Render]` 四类日志逐层定位。
+5. 修改 `smoothText` 的揭示步进时注意：固定小步进在快速流式下会积压，导致"结束后才慢慢滚动"；应按积压比例（`rest/10`）步进。
+6. 思考内容用 `m.reasonings`（每 step 一张卡片），不要只存 `m.reasoning` 单个字符串——推理模型可能大部分 SSE 事件都是 thinking，没有卡片用户会误以为卡死。
