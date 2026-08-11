@@ -14,8 +14,43 @@ WePChat 是一个本地优先的轻量移动端 AI 聊天应用，当前以静�
 
 项目目标是做一个克制、快速、适合日常使用的 LLM 客户端：对话、Markdown 阅读、文件工作区、轻量代码/网页生成、图片生成与编辑。它不是 ComfyUI、Midjourney 或移动开发环境，也不追求内置完整 Linux。
 
+## 为什么选 WePChat
+
+<div align="center">
+
+**纯前端 · 轻量 · 缓存命中高 · 无预设系统提示词**
+
+</div>
+
+WePChat 是纯静态前端应用，不依赖任何后端服务，任意静态服务器（甚至直接双击 `index.html`）即可运行。它刻意与 `pi-agent` 这类“干重活”的代理工具错位：pi-agent 擅长改代码、跑命令、深度代理长任务，WePChat 专注“走路时掏出手机问点啥”的轻问轻答。
+
+- **纯前端、零部署**：静态 Vue/H5 + IndexedDB 本地存储，数据不出浏览器，无需安装、无需构建、无需后端。
+- **轻量克制**：不内置 Linux、不挂 Node.js 运行时、不做沉重配置，打开即聊、用完即走。
+- **缓存命中高**：内存 + IndexedDB 双层缓存，会话、长文本、图片持久化不丢，重复查看秒开、不重复请求。
+- **无预设系统提示词**：默认不发送任何系统提示词（仅当你在设置里显式填写时才发送），模型只按你当下的提问回答，不被预设人设与规则干扰。
+- **手机友好**：轻量移动端设计，走路、通勤、排队时随手掏出手机就能问两句。
+
+### 桌面浏览器访问效果
+
+<div align="center">
+  <img src="img/img_pc.png" width="90%" alt="PC 浏览器访问效果">
+</div>
+
+### 缓存命中效果
+
+<div align="center">
+  <img src="img/img_cache.png" width="90%" alt="缓存命中效果">
+</div>
+
+### 识图效果
+
+<div align="center">
+  <img src="img/img_test.png" width="90%" alt="识图效果">
+</div>
+
 这个项目的初衷是，Cherry Studio / Chatbox 已经过于沉重，不适合我的使用场景了，我得做个简单点。所以 WePChat 适合这些场景：
 - 日常问答
+- 走路、通勤时掏出手机随手问点啥：轻问轻答、用完即走
 - 想法快速验证：WePChat 支持编写 HTML 并预览，以及简单的 JavaScript 代码运行
 - 测试模型连通性：WePChat 支持 OpenAI 的 Completions / Responses 接口，支持 Anthropic 的 Messages 接口。配置简单，模型切换方便，可以快速验证连通性
 - 日常快速生图：WePChat 支持 OpenAI 的图像生成 / 图像编辑
