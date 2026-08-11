@@ -44,8 +44,8 @@ const API = (() => {
   /* ---------- SSE 流式请求（XHR 增量解析，abort 可中断） ---------- */
   function sseOnce({ url, headers, body, onEvent, signal }) {
     return new Promise((resolve, reject) => {
-      L.debug('SSE', 'POST ' + url);
       const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
       xhr.setRequestHeader('Content-Type', 'application/json');
       xhr.setRequestHeader('Accept', 'text/event-stream');
       Object.keys(headers || {}).forEach(k => { try { xhr.setRequestHeader(k, headers[k]); } catch (e) {} });
