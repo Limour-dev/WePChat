@@ -577,7 +577,7 @@
           }
         } finally {
           await waitSmoothText(assistantMsg);
-          (assistantMsg.reasonings || []).forEach(r => { if (r && r.status === 'streaming') r.status = 'done'; });
+          (assistantMsg.reasonings || []).forEach(r => { if (r && r.status === 'streaming') { r.status = 'done'; r._open = false; } });
           if (!assistantMsg.usage && (assistantMsg.content || assistantMsg.reasoning)) {
             const estimated = MODEL_META.estimateTokens(tokenMessageText(assistantMsg));
             assistantMsg.usage = { inputTokens: 0, outputTokens: estimated, totalTokens: estimated, source: 'estimate' };

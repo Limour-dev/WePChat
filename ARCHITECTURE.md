@@ -130,7 +130,7 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
    - 旧实现按固定档位（1-12 字符/24ms）揭示，流式快时积压越来越大，表现为"结束后才慢慢滚动"。
 4. **渲染层（Vue 模板 `index.html`）**：每条 assistant 消息包含：
    - **思考/工具卡片交错渲染**（`displayFlow(m)` 合并 `m.reasonings` + `m.toolCalls` 按 `_step` 排序，同一轮内思考先于工具）：保证多轮工具调用显示为 思考1 → 工具1 → 思考2 → 正文，而不是思考全部排在工具前面；
-   - **思考卡片**（`m.reasonings`，每 step 一张）：默认展开、紫色左边框、状态"思考中（spinner）/ 完成"，文字随 SSE 实时增长；
+   - **思考卡片**（`m.reasonings`，每 step 一张）：紫色左边框、状态"思考中（spinner）/ 完成"、文字随 SSE 实时增长；流式期间默认展开，`finalizeReasoning` 完成后自动折叠（可点击展开回顾）；
    - **工具调用卡片**（`m.toolCalls`）：composing/running/done 状态；
    - **正文**（`m.content`，`renderMd(m)` 渲染）：`v-html` markdown，由 smoothText 逐字揭示。
 

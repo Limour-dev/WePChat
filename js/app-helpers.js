@@ -512,12 +512,13 @@
     const key = 'reasoning_step_' + step;
     let r = list.find(x => x && x._key === key);
     if (!r && text) {
-      r = { id: key, seq: list.length + 1, text: '', status: 'done', _open: true, _key: key, _streamStep: step, _step: step };
+      r = { id: key, seq: list.length + 1, text: '', status: 'done', _open: false, _key: key, _streamStep: step, _step: step };
       list.push(r);
     }
     if (r) {
       r.text = text || r.text || '';
       r.status = 'done';
+      r._open = false; // 完成后自动折叠
       r._step = step;
       delete r._streamStep;
     }
