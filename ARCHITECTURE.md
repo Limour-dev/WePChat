@@ -60,10 +60,10 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 | 文件 | 职责 |
 |---|---|
 | `app-methods-core.js` | 应用设置、plus 初始化、返回键、版本/更新检查、远程默认配置拉取与应用 |
-| `app-methods-sessions.js` | 会话管理 |
+| `app-methods-sessions.js` | 会话管理、`displayFlow`（思考/工具卡片按 `_step` 交错合并渲染） |
 | `app-methods-workspace.js` | 工作区：文件树、新建/上传/编辑/删除/导出、HTML 预览 |
 | `app-methods-generation.js` | 文本/图片生成流程（多轮工具调用、流式正文累计、思考/工具卡片） |
-| `app-helpers.js` | 共享纯函数：`smoothText` 逐字动画（按积压比例揭示）、`syncReasoning`/`finalizeReasoning` 思考卡片、`syncStreamToolCalls`/`finalizeStreamToolCalls` 工具卡片、variant 快照等 |
+| `app-helpers.js` | 共享纯函数：`smoothText` 逐字动画（按积压比例揭示）、`syncReasoning`/`finalizeReasoning` 思考卡片、`syncStreamToolCalls`/`finalizeStreamToolCalls` 工具卡片（卡片均带 `_step` 保留所属轮次，供 `displayFlow` 排序）、variant 快照等 |
 | `app-methods-theme.js` | 主题 |
 | `app-methods-onboarding.js` | 首次引导 |
 | `app-methods-lock.js` | 应用锁 |
@@ -129,8 +129,9 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
    - `step = max(1, min(60, ceil(rest/10)))`：积压越大揭示越快，流式速率高时保持 ~20-35 字符小积压，结束后 ~0.5s 排空；
    - 旧实现按固定档位（1-12 字符/24ms）揭示，流式快时积压越来越大，表现为"结束后才慢慢滚动"。
 4. **渲染层（Vue 模板 `index.html`）**：每条 assistant 消息包含：
-   - **思考卡片**（`m.reasonings`，每 step 一张，`displayReasonings(m)` 渲染）：默认展开、紫色左边框、状态"思考中（spinner）/ 完成"，文字随 SSE 实时增长；
-   - **工具调用卡片**（`m.toolCalls`，`displayToolCalls(m)` 渲染）：composing/running/done 状态；
+   - **思考/工具卡片交错渲染**（`displayFlow(m)` 合并 `m.reasonings` + `m.toolCalls` 按 `_step` 排序，同一轮内思考先于工具）：保证多轮工具调用显示为 思考1 → 工具1 → 思考2 → 正文，而不是思考全部排在工具前面；
+   - **思考卡片**（`m.reasonings`，每 step 一张）：默认展开、紫色左边框、状态"思考中（spinner）/ 完成"，文字随 SSE 实时增长；
+   - **工具调用卡片**（`m.toolCalls`）：composing/running/done 状态；
    - **正文**（`m.content`，`renderMd(m)` 渲染）：`v-html` markdown，由 smoothText 逐字揭示。
 
 > 推理模型（如 deepseek-v4-flash）常把大部分 SSE 事件用于 thinking delta，正文 content 为空；

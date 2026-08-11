@@ -772,6 +772,29 @@
       displayReasonings(m) {
         return (m && Array.isArray(m.reasonings) ? m.reasonings : []).filter(r => r && r.text);
       },
+      // 按 step 交错合并思考卡片与工具卡片：思考1 → 工具1 → 思考2 → 回答
+      // 同一 step 内思考先于工具（模型先输出 reasoning delta 再输出工具参数）
+      displayFlow(m) {
+        const items = [];
+        (m && Array.isArray(m.reasonings) ? m.reasonings : []).forEach(r => {
+          if (!r || !r.text) return;
+          items.push({
+            kind: 'reasoning',
+            step: r._step != null ? r._step : (r._key ? parseInt(String(r._key).replace('reasoning_step_', ''), 10) : r.seq || 0),
+            item: r
+          });
+        });
+        (m && m.toolCalls || []).forEach(t => {
+          if (!this.shouldDisplayToolCall(t)) return;
+          items.push({
+            kind: 'tool',
+            step: t._step != null ? t._step : 0,
+            item: t
+          });
+        });
+        items.sort((a, b) => (a.step - b.step) || (a.kind === b.kind ? 0 : (a.kind === 'reasoning' ? -1 : 1)));
+        return items;
+      },
       toolTitle(t) {
         const name = String(t && t.name || '');
         const args = this.toolArgObject(t);

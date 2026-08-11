@@ -472,7 +472,8 @@
           _open: true,
           _streaming: true,
           _streamKey: key,
-          _streamStep: step
+          _streamStep: step,
+          _step: step
         };
         calls.push(t);
       }
@@ -484,6 +485,7 @@
       t._streaming = true;
       t._streamKey = key;
       t._streamStep = step;
+      t._step = step;
     });
   }
 
@@ -493,13 +495,14 @@
     const key = 'reasoning_step_' + step;
     let r = list.find(x => x && x._key === key);
     if (!r) {
-      r = { id: key, seq: list.length + 1, text: '', status: 'streaming', _open: true, _key: key, _streamStep: step };
+      r = { id: key, seq: list.length + 1, text: '', status: 'streaming', _open: true, _key: key, _streamStep: step, _step: step };
       list.push(r);
     }
     r.text = text;
     r.status = 'streaming';
     if (typeof r._open !== 'boolean') r._open = true;
     r._streamStep = step;
+    r._step = step;
     return r;
   }
 
@@ -509,12 +512,13 @@
     const key = 'reasoning_step_' + step;
     let r = list.find(x => x && x._key === key);
     if (!r && text) {
-      r = { id: key, seq: list.length + 1, text: '', status: 'done', _open: true, _key: key, _streamStep: step };
+      r = { id: key, seq: list.length + 1, text: '', status: 'done', _open: true, _key: key, _streamStep: step, _step: step };
       list.push(r);
     }
     if (r) {
       r.text = text || r.text || '';
       r.status = 'done';
+      r._step = step;
       delete r._streamStep;
     }
   }
@@ -539,7 +543,8 @@
           arguments: src.arguments || '{}',
           status: 'running',
           result: null,
-          _open: false
+          _open: false,
+          _step: step
         };
         calls.push(t);
       }
@@ -549,6 +554,7 @@
       t.status = 'running';
       if (t.result == null) t.result = null;
       if (typeof t._open !== 'boolean') t._open = false;
+      t._step = step;
       displayCalls.push(clearStreamState(t));
     });
     for (let i = calls.length - 1; i >= 0; i--) {

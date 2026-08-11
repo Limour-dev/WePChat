@@ -194,47 +194,46 @@
             </template>
 
             <template v-else-if="m.role === 'assistant'">
-              <!-- 思考过程卡片 -->
-              <div v-for="r in displayReasonings(m)" :key="r.id" class="tool-card reasoning-card">
-                <button class="tool-head" @click="r._open = !r._open">
-                  <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3A5.5 5.5 0 0 0 4 8.5c0 1.6.7 3 1.8 4L4 15l2.7-.7a5.5 5.5 0 1 0 2.8-11.3z"/><path d="M12 8v4M12 15.5v.5"/></svg></span>
-                  <span class="tool-name">思考过程{{ (m.reasonings && m.reasonings.length > 1) ? ' ' + r.seq : '' }}</span>
-                  <span class="tool-status">
-                    <span class="spinner" v-if="r.status === 'streaming'"></span>
-                    <template v-if="r.status === 'streaming'">思考中</template>
-                    <template v-else>完成</template>
-                  </span>
-                </button>
-                <div class="tool-body" v-if="r._open">
-                  <div class="reasoning-body">{{ r.text }}</div>
-                </div>
+              <!-- 思考/工具卡片（按 step 交错：思考1 → 工具1 → 思考2 → 回答） -->
+              <div v-for="f in displayFlow(m)" :key="f.kind + '_' + f.item.id" :class="['tool-card', f.kind === 'reasoning' ? 'reasoning-card' : '']">
+                <template v-if="f.kind === 'reasoning'">
+                  <button class="tool-head" @click="f.item._open = !f.item._open">
+                    <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3A5.5 5.5 0 0 0 4 8.5c0 1.6.7 3 1.8 4L4 15l2.7-.7a5.5 5.5 0 1 0 2.8-11.3z"/><path d="M12 8v4M12 15.5v.5"/></svg></span>
+                    <span class="tool-name">思考过程{{ (m.reasonings && m.reasonings.length > 1) ? ' ' + f.item.seq : '' }}</span>
+                    <span class="tool-status">
+                      <span class="spinner" v-if="f.item.status === 'streaming'"></span>
+                      <template v-if="f.item.status === 'streaming'">思考中</template>
+                      <template v-else>完成</template>
+                    </span>
+                  </button>
+                  <div class="tool-body" v-if="f.item._open">
+                    <div class="reasoning-body">{{ f.item.text }}</div>
+                  </div>
+                </template>
+                <template v-else>
+                  <button class="tool-head" @click="f.item._open = !f.item._open">
+                    <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z"/></svg></span>
+                    <span class="tool-name">{{ toolTitle(f.item) }}</span>
+                    <span class="tool-status">
+                      <span class="spinner" v-if="f.item.status === 'composing' || f.item.status === 'running'"></span>
+                      <template v-if="f.item.status === 'composing'">编写中</template>
+                      <template v-else-if="f.item.status === 'running'">执行中</template>
+                      <template v-else-if="f.item.status === 'done'">完成</template>
+                      <template v-else-if="f.item.status === 'error'">出错</template>
+                      <template v-else-if="f.item.status === 'cancelled'">已停止</template>
+                    </span>
+                  </button>
+                  <div class="tool-body" v-if="f.item._open">
+                    <div class="tool-sec">参数</div>
+                    <div class="tool-pre">{{ f.item.arguments ? prettyJson(f.item.arguments) : '等待参数…' }}</div>
+                    <template v-if="f.item.result != null">
+                      <div class="tool-sec">结果</div>
+                      <div v-if="isDiffResult(f.item.result)" v-html="renderDiff(f.item.result)"></div>
+                      <div v-else class="tool-pre">{{ f.item.result }}</div>
+                    </template>
+                  </div>
+                </template>
               </div>
-
-              <!-- 工具调用 -->
-              <div v-for="t in displayToolCalls(m)" :key="t.id" class="tool-card">
-                <button class="tool-head" @click="t._open = !t._open">
-                  <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z"/></svg></span>
-                  <span class="tool-name">{{ toolTitle(t) }}</span>
-                  <span class="tool-status">
-                    <span class="spinner" v-if="t.status === 'composing' || t.status === 'running'"></span>
-                    <template v-if="t.status === 'composing'">编写中</template>
-                    <template v-else-if="t.status === 'running'">执行中</template>
-                    <template v-else-if="t.status === 'done'">完成</template>
-                    <template v-else-if="t.status === 'error'">出错</template>
-                    <template v-else-if="t.status === 'cancelled'">已停止</template>
-                  </span>
-                </button>
-                <div class="tool-body" v-if="t._open">
-                  <div class="tool-sec">参数</div>
-                  <div class="tool-pre">{{ t.arguments ? prettyJson(t.arguments) : '等待参数…' }}</div>
-                  <template v-if="t.result != null">
-                    <div class="tool-sec">结果</div>
-                    <div v-if="isDiffResult(t.result)" v-html="renderDiff(t.result)"></div>
-                    <div v-else class="tool-pre">{{ t.result }}</div>
-                  </template>
-                </div>
-              </div>
-
               <!-- 正文 -->
               <div class="md" v-if="m.content" v-html="renderMd(m)"></div>
               <div class="image-grid" v-if="m.images && m.images.length">
