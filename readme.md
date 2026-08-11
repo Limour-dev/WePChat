@@ -152,6 +152,21 @@ http://127.0.0.1:8765/
 - 支持配置 API 地址 / Key / 接口类型（`providers` 数组）及各设置项。
 - 启动带 CORS 的服务器后，默认 URL 可填 `http://127.0.0.1:8765/wepchat.config.json`。
 
+#### 用 Nginx 单独托管配置
+
+若不想把配置文件放在站点目录里，可以复制 `wepchat.config.json.template` 为 `wepchat.config.json` 放到服务器任意位置（如 `/data/`），再在 Nginx 站点配置中加一段 `location` 单独暴露它：
+
+```nginx
+location = /wepchat.config.json {
+  alias /data/wepchat.config.json;
+  default_type application/json;
+  add_header Cache-Control "no-cache";
+  add_header Access-Control-Allow-Origin *;
+}
+```
+
+这样应用里填的配置 URL 就是 `https://你的域名/wepchat.config.json`，无需去除注释，Nginx 会直接返回 JSONC 原文件，由应用端剥离注释后解析。
+
 ## 设计取舍
 
 WePChat 刻意保持轻量：
