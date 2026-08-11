@@ -656,6 +656,7 @@ const ImageAPI = (() => {
       } catch (e) {
         L.error('ImageAPI', 'step=' + step + ' error: ' + (e && e.message || String(e)) + ' code=' + (e && e.code || ''));
         const line = step + (e && e.url ? ' @ ' + e.url : '') + ': ' + (e && e.message || String(e));
+        errors.push(line);
         if (e && /^(IMAGE-SUBMIT-UNKNOWN|IMAGE-TOO-LARGE|IMAGE-DOWNLOAD-|IMAGE-TASK-|NET-ABORTED)/.test(e.code || '')) throw e;
         if (mode !== 'auto') {
           const err = new Error('图片生成失败：' + line);
