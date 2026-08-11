@@ -386,6 +386,10 @@
           };
           assistantMsg.variantBaseId = assistantMsg.id + ':v1';
           this.session.messages.push(assistantMsg);
+          // Vue3 响应式：push 进数组的是原始对象，局部变量 assistantMsg 仍是 raw（非响应式），
+          // 流式期间 syncReasoning / reasoning= 等直接修改不会触发重渲染，思考卡片不显示；
+          // 需从响应式数组重新读取 Proxy（与 sendImageMessage 的写法一致）。
+          assistantMsg = this.session.messages[this.session.messages.length - 1];
         }
         const assistantIndex = this.session.messages.indexOf(assistantMsg);
         const workingMessages = this.session.messages

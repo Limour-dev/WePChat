@@ -9,7 +9,7 @@
 
 ```
 WePChat/
-├── index.html             # 手机端(SWD)入口 —— 单页 Vue2 应用，全部靠 <script> 顺序加载
+├── index.html             # 手机端(SWD)入口 —— 单页 Vue3 应用，全部靠 <script> 顺序加载
 ├── manifest.json          # HBuilderX / HTML5+ 配置（Android 打包、权限、App 元信息）
 ├── androidPrivacy.json    # Android 隐私合规配置
 ├── server.py              # 本地静态服务器（带 CORS 头，用于远程配置拉取等跨域场景）
@@ -177,3 +177,4 @@ cp wepchat.config.json.template wepchat.config.json
 4. 流式渲染链路（§3.9）四层：`api.js` SSE 解析 → `generateAssistant` 累计 → `smoothText` 动画 → Vue 模板。排查"流式期间 UI 不更新"时按 `[SSE]/[Stream]/[Smooth]/[Render]` 四类日志逐层定位。
 5. 修改 `smoothText` 的揭示步进时注意：固定小步进在快速流式下会积压，导致"结束后才慢慢滚动"；应按积压比例（`rest/10`）步进。
 6. 思考内容用 `m.reasonings`（每 step 一张卡片），不要只存 `m.reasoning` 单个字符串——推理模型可能大部分 SSE 事件都是 thinking，没有卡片用户会误以为卡死。
+7. **Vue3 响应式陷阱（raw vs Proxy）**：本项目实际使用 Vue 3.4（`libs/vue.global.prod.js`，Proxy 响应式），不是 Vue2。往 `session.messages` push 新消息时，局部变量持有的是 **raw 对象**，而模板渲染拿到的是 **Proxy**；流式期间直接改 raw 对象（`syncReasoning`、`msg.reasoning = ...`、`msg.status = ...`）**不会触发重渲染**，表现为“SSE 正常到达但思考卡片/正文不更新，结束后才一次性出现”。正确写法是 push 后从响应式数组读回 Proxy 再修改：`assistantMsg = this.session.messages[this.session.messages.length - 1]`（见 `sendImageMessage` 与 `generateAssistant` 新消息分支）。重新生成分支（`this.session.messages[targetIndex]`）天然是 Proxy，无需处理。
