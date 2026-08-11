@@ -52,6 +52,7 @@ const API = (() => {
 
       let seen = 0, buf = '', curEvent = '', aborted = false, forcedError = null;
       let firstByteTimer = null, idleTimer = null;
+      let eventCount = 0;
 
       const clearTimers = () => {
         clearTimeout(firstByteTimer);
@@ -79,11 +80,14 @@ const API = (() => {
           if (line.startsWith('data:')) {
             const data = line.slice(5).trim();
             if (data === '[DONE]') continue;
-            try { onEvent(curEvent, JSON.parse(data)); } catch (e) { L.warn('SSE', 'JSON parse error in SSE data: ' + e.message); }
+            try {
+              onEvent(curEvent, JSON.parse(data));
+              eventCount++;
+              if (eventCount % 100 === 0) L.debug('SSE', '已处理 SSE 事件 ' + eventCount + ' 条');
+            } catch (e) { L.warn('SSE', 'JSON parse error in SSE data: ' + e.message); }
           }
         }
       }
-
       xhr.onprogress = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           const t = xhr.responseText;
