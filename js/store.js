@@ -43,6 +43,11 @@ const Store = {
       }
     } catch (e) { return; }
     keys.forEach(k => {
+      /* IndexedDB 预热已将最新值写入 cache，跳过已有键避免用 localStorage 旧值覆盖 */
+      if (this._cache.has(k)) {
+        try { localStorage.removeItem(k); } catch (e) {}
+        return;
+      }
       let raw = null;
       try { raw = localStorage.getItem(k); } catch (e) {}
       if (raw == null) return;
