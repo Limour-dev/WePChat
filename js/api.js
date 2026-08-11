@@ -67,7 +67,7 @@ const API = (() => {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(() => failAfter('STREAM-IDLE-TIMEOUT', '流式响应超过 90 秒没有新数据'), 90000);
       };
-      firstByteTimer = setTimeout(() => failAfter('STREAM-FIRST-BYTE-TIMEOUT', '等待模型首个响应超过 45 秒'), 45000);
+      firstByteTimer = setTimeout(() => failAfter('STREAM-FIRST-BYTE-TIMEOUT', '等待模型首个响应超过 120 秒'), 120000);
 
       function feed(chunk) {
         buf += chunk;
