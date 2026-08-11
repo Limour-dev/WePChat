@@ -377,10 +377,22 @@ const API = (() => {
           const s = splitDataUrl(a.dataUrl);
           if (s) parts.push({ type: 'image', source: { type: 'base64', media_type: s.mime, data: s.data } });
         });
-        parts.push({ type: 'text', text: textWithFiles(m) });
-        out.push({ role: 'user', content: parts });
+        const text = textWithFiles(m);
+        if (text.trim()) parts.push({ type: 'text', text });
+        if (parts.length) out.push({ role: 'user', content: parts });
       } else if (m.role === 'assistant') {
         const parts = [];
+        /* 思考块：带签名回放（Anthropic 要求保留 signature，同时保证缓存前缀稳定） */
+        (Array.isArray(m.reasonings) ? m.reasonings : []).forEach(r => {
+          if (!r || !r.text) return;
+          const sig = String(r.signature || '').trim();
+          if (sig) {
+            parts.push({ type: 'thinking', thinking: r.text, signature: sig });
+          } else {
+            /* 无签名（旧消息/中断流）降级为文本，避免 API 拒绝 */
+            parts.push({ type: 'text', text: r.text });
+          }
+        });
         if (m.content) parts.push({ type: 'text', text: m.content });
         (m.toolCalls || []).forEach(t => {
           let input = {};
@@ -390,7 +402,12 @@ const API = (() => {
         if (parts.length) out.push({ role: 'assistant', content: parts });
       } else if (m.role === 'tool') {
         /* Anthropic 的 tool_result 放在 user 消息里；相邻的合并 */
-        const block = { type: 'tool_result', tool_use_id: m.toolCallId, content: m.content || '' };
+        const block = {
+          type: 'tool_result',
+          tool_use_id: m.toolCallId,
+          content: m.content || '',
+          ...(m.isError ? { is_error: true } : {})
+        };
         const last = out[out.length - 1];
         if (last && last.role === 'user' && Array.isArray(last.content) && last.content[0] && last.content[0].type === 'tool_result') {
           last.content.push(block);
@@ -409,24 +426,46 @@ const API = (() => {
 
   async function sendAnthropic(ctx) {
     const { provider, model, messages, tools, settings, signal, onUpdate } = ctx;
+    const useCache = settings.promptCache !== false; // 默认开启 Anthropic 提示缓存
     const body = {
       model,
       messages: buildAnthropicMessages(messages),
       max_tokens: settings.maxTokens || 8192,
       stream: true
     };
-    if (settings.systemPrompt) body.system = settings.systemPrompt;
+    if (settings.systemPrompt) {
+      /* 系统提示词加 cache_control 断点：缓存整段 system */
+      body.system = useCache
+        ? [{ type: 'text', text: settings.systemPrompt, cache_control: { type: 'ephemeral' } }]
+        : settings.systemPrompt;
+    }
     if (settings.temperature != null) body.temperature = settings.temperature;
     if (tools && tools.length) {
       body.tools = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+      /* 最后一个工具加 cache_control：工具定义本身也参与缓存 */
+      if (useCache) body.tools[body.tools.length - 1].cache_control = { type: 'ephemeral' };
+    }
+    /* 最后一个 user 消息（含 tool_result 合并消息）加 cache_control：缓存整个会话前缀 */
+    if (useCache && body.messages.length) {
+      const last = body.messages[body.messages.length - 1];
+      if (last.role === 'user') {
+        if (Array.isArray(last.content)) {
+          const lastBlock = last.content[last.content.length - 1];
+          if (lastBlock && (lastBlock.type === 'text' || lastBlock.type === 'tool_result' || lastBlock.type === 'image')) {
+            lastBlock.cache_control = { type: 'ephemeral' };
+          }
+        } else if (typeof last.content === 'string') {
+          last.content = [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }];
+        }
+      }
     }
     const headers = {
       'x-api-key': provider.apiKey || '',
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     };
-    const st = { content: '', reasoning: '', toolCalls: [], usage: null };
-    const blocks = {}; // index -> {type, tool}
+    const st = { content: '', reasoning: '', toolCalls: [], usage: null, reasoningSignature: '' };
+    const blocks = {}; // index -> {type, tool, signature}
     const streamTools = () => st.toolCalls.concat(Object.keys(blocks).map(k => blocks[k]).filter(b => b && b.tool).map(b => b.tool));
     await sseRequest({
       url: anthropicUrl(provider.baseUrl),
@@ -447,15 +486,21 @@ const API = (() => {
           const b = data.content_block || {};
           blocks[data.index] = b.type === 'tool_use'
             ? { type: 'tool_use', tool: { id: b.id, name: b.name, arguments: '' } }
-            : { type: b.type };
+            : { type: b.type, signature: '' };
           if (b.type === 'tool_use') {
             st.streamTools = streamTools();
             onUpdate(st);
+          } else if (b.type === 'thinking') {
+            /* 思考块开始：清空签名，等待 signature_delta 累积 */
+            blocks[data.index].signature = '';
           }
         } else if (type === 'content_block_delta') {
           const d = data.delta || {}, blk = blocks[data.index] || {};
           if (d.type === 'text_delta') st.content += d.text || '';
           else if (d.type === 'thinking_delta') st.reasoning += d.thinking || '';
+          else if (d.type === 'signature_delta') {
+            if (blk.type === 'thinking') blk.signature = (blk.signature || '') + (d.signature || '');
+          }
           else if (d.type === 'input_json_delta' && blk.tool) {
             blk.tool.arguments += d.partial_json || '';
             st.streamTools = streamTools();
@@ -468,10 +513,15 @@ const API = (() => {
             st.toolCalls.push(blk.tool);
             st.streamTools = streamTools();
             onUpdate(st);
+          } else if (blk && blk.type === 'thinking' && blk.signature) {
+            /* 思考块结束：把签名暴露给上层，供后续回放（缓存前缀一致） */
+            st.reasoningSignature = blk.signature;
+            onUpdate(st);
           }
         } else if (type === '__json__') {
           (data.content || []).forEach(b => {
             if (b.type === 'text') st.content += b.text || '';
+            if (b.type === 'thinking') { st.reasoning += b.thinking || ''; st.reasoningSignature = b.signature || st.reasoningSignature; }
             if (b.type === 'tool_use') st.toolCalls.push({ id: b.id, name: b.name, arguments: JSON.stringify(b.input || {}) });
           });
           onUpdate(st);

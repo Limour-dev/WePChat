@@ -19,14 +19,62 @@
         });
       },
       apiBaseMessages() {
-        return this.session.messages
-          .filter(m => m.role === 'user' || m.role === 'assistant')
-          .map(m => {
-            if (m.role === 'assistant') {
-              return { role: 'assistant', content: m.content || '', reasoning: m.reasoning || '' };
-            }
-            return clone(m);
+        return this.historyToApiMessages(this.session.messages);
+      },
+      /* 把会话消息转成 API 层扁平消息：
+       *  - user 原样 clone
+       *  - assistant 按 step 拆分：每条 assistant 携带该 step 的 thinking(reasonings) + 正文 + toolCalls，
+       *    随后紧跟该 step 的 role:'tool' 结果消息（tool_result 回放，保证缓存前缀与真实对话一致）
+       *  - 旧消息（无 contentSteps）整条作为单 step 回放
+       */
+      historyToApiMessages(sessionMessages) {
+        const out = [];
+        (sessionMessages || []).forEach(m => {
+          if (m.role === 'user') {
+            out.push(clone(m));
+            return;
+          }
+          if (m.role !== 'assistant') return;
+          const contentSteps = Array.isArray(m.contentSteps) ? m.contentSteps.filter(s => s && s.text) : [];
+          const reasonings = Array.isArray(m.reasonings) ? m.reasonings.filter(r => r && r.text) : [];
+          const toolCalls = Array.isArray(m.toolCalls) ? m.toolCalls.filter(t => t && t.id) : [];
+          /* 收集所有出现的 step */
+          const steps = new Set();
+          contentSteps.forEach(s => { if (s._step != null) steps.add(s._step); });
+          reasonings.forEach(r => { if (r._step != null) steps.add(r._step); });
+          toolCalls.forEach(t => { if (t._step != null) steps.add(t._step); });
+          if (!steps.size) {
+            /* 旧消息：整条作为单 step */
+            out.push({
+              role: 'assistant',
+              content: m.content || '',
+              reasoning: m.reasoning || '',
+              reasonings,
+              toolCalls: toolCalls.map(t => ({ id: t.id, name: t.name, arguments: t.arguments || '{}' }))
+            });
+            toolCalls.forEach(t => {
+              if (t.result != null) out.push({ role: 'tool', toolCallId: t.id, content: t.result, isError: t.status === 'error' });
+            });
+            return;
+          }
+          /* 按 step 顺序拆分：思考 → 工具 → 正文 */
+          [...steps].sort((a, b) => a - b).forEach(step => {
+            const stepReasonings = reasonings.filter(r => r._step === step);
+            const stepTools = toolCalls.filter(t => t._step === step);
+            const stepContent = contentSteps.find(s => s._step === step);
+            out.push({
+              role: 'assistant',
+              content: stepContent ? stepContent.text : '',
+              reasoning: stepReasonings.map(r => r.text).join(''),
+              reasonings: stepReasonings,
+              toolCalls: stepTools.map(t => ({ id: t.id, name: t.name, arguments: t.arguments || '{}' }))
+            });
+            stepTools.forEach(t => {
+              if (t.result != null) out.push({ role: 'tool', toolCallId: t.id, content: t.result, isError: t.status === 'error' });
+            });
           });
+        });
+        return out;
       },
       imageRequestModel(mode) {
         const provider = this.imageProvider;
@@ -365,7 +413,7 @@
           if (!assistantMsg || assistantMsg.role !== 'assistant') return;
           const variants = this.ensureAssistantVariants(assistantMsg);
           const nextVariant = this.snapshotAssistantVariant({
-            content: '', reasoning: '', reasonings: [], toolCalls: [], previews: [], images: [], imageRecovery: null,
+            content: '', reasoning: '', reasonings: [], contentSteps: [], toolCalls: [], previews: [], images: [], imageRecovery: null,
             error: '', usage: null, model, createdAt: U.now(), status: 'streaming'
           }, U.uuid());
           variants.push(nextVariant);
@@ -378,6 +426,8 @@
             role: 'assistant',
             content: '',
             reasoning: '',
+            reasonings: [],
+            contentSteps: [],
             toolCalls: [],
             previews: [],
             status: 'streaming',
@@ -392,15 +442,8 @@
           assistantMsg = this.session.messages[this.session.messages.length - 1];
         }
         const assistantIndex = this.session.messages.indexOf(assistantMsg);
-        const workingMessages = this.session.messages
-          .slice(0, assistantIndex)
-          .filter(m => m.role === 'user' || m.role === 'assistant')
-          .map(m => {
-            if (m.role === 'assistant') {
-              return { role: 'assistant', content: m.content || '', reasoning: m.reasoning || '' };
-            }
-            return clone(m);
-          });
+        /* 历史消息按 step 拆分：assistant 携带 toolCalls/reasonings + 紧跟 tool 结果，保证缓存前缀稳定 */
+        const workingMessages = this.historyToApiMessages(this.session.messages.slice(0, assistantIndex));
         const tools = this.settings.agentEnabled && API.supportsTools(provider) ? this.enabledTools() : [];
         const reqSettings = this.settingsForRequest(tools);
 
@@ -419,6 +462,7 @@
         let accumulatedContent = '';
         let accumulatedReasoning = '';
         let currentStepReasoning = '';
+        let currentStepSignature = ''; // 当前 step 思考块的 signature（供回放，保证缓存前缀一致）
         let stepSeenLen = 0;
         let stepSeenReasoningLen = 0;
         let updateEventCount = 0;
@@ -458,6 +502,7 @@
                 if (currentStepReasoning) {
                   syncReasoning(assistantMsg, step, currentStepReasoning);
                 }
+                if (st.reasoningSignature) currentStepSignature = st.reasoningSignature;
                 const nowLog = Date.now();
                 if (updateEventCount === 1 || updateEventCount % 50 === 0 || nowLog - lastUpdateLogAt >= 1000) {
                   lastUpdateLogAt = nowLog;
@@ -482,14 +527,21 @@
               accumulatedReasoning += delta;
               stepSeenReasoningLen = rr.length;
             }
+            if (result.reasoningSignature) currentStepSignature = result.reasoningSignature;
             smoothText(this, assistantMsg, accumulatedContent);
             assistantMsg.reasoning = accumulatedReasoning;
-            finalizeReasoning(assistantMsg, step, currentStepReasoning);
+            finalizeReasoning(assistantMsg, step, currentStepReasoning, currentStepSignature);
+            /* 记录本 step 的完整正文（供 UI 按 step 交错展示 + 后续请求按 step 回放） */
+            if (rc) {
+              if (!Array.isArray(assistantMsg.contentSteps)) assistantMsg.contentSteps = [];
+              assistantMsg.contentSteps.push({ id: 'content_step_' + step, text: rc, _step: step });
+            }
             addUsage(result.usage);
-            L.info('Gen', 'step=' + step + ' result: contentLen=' + (result.content || '').length + ' toolCalls=' + (result.toolCalls || []).length + ' usage=' + JSON.stringify(result.usage || {}));
+            L.info('Gen', 'step=' + step + ' result: contentLen=' + rc.length + ' toolCalls=' + (result.toolCalls || []).length + ' usage=' + JSON.stringify(result.usage || {}));
             stepSeenLen = 0;
             stepSeenReasoningLen = 0;
             currentStepReasoning = '';
+            currentStepSignature = '';
             if (this.stopRequested) {
               cancelStreamToolCalls(assistantMsg, step);
               break;
@@ -518,9 +570,13 @@
 
             const displayCalls = finalizeStreamToolCalls(assistantMsg, rawCalls, step);
             L.info('Gen', 'executing ' + displayCalls.length + ' tool calls: ' + displayCalls.map(t => t.name).join(', '));
+            /* 推送本 step 的 assistant 消息：content 用本 step 的完整正文（非累计），reasonings 带 signature 回放 */
+            const stepReasonings = (assistantMsg.reasonings || []).filter(r => r && r._step === step);
             workingMessages.push({
               role: 'assistant',
-              content: accumulatedContent || result.content || '',
+              content: result.content || '',
+              reasoning: currentStepReasoning || stepReasonings.map(r => r.text).join(''),
+              reasonings: stepReasonings,
               toolCalls: rawCalls.map((t, idx) => ({
                 id: t.id || displayCalls[idx].id,
                 name: t.name,

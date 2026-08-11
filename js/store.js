@@ -186,6 +186,7 @@ const Store = {
       appMode: 'chat',               // chat | image
       maxToolRounds: 8,
       maxToolCalls: 24,
+      promptCache: true,                 // Anthropic 提示缓存：true 发送 cache_control 断点（提升缓存命中）
       systemPrompt: '',
       temperature: null,             // null = 不传
       maxTokens: null,

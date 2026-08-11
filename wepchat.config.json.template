@@ -71,6 +71,7 @@
   "systemPrompt": "",         // 全局 System Prompt，留空不发送
   "temperature": null,        // 温度 null(不传) | 0 ~ 2
   "maxTokens": null,          // 最大输出 tokens null(默认) | 数值
+  "promptCache": true,        // Anthropic 提示缓存：true 发送 cache_control 断点（提升缓存命中），false 关闭
 
   /* —— 图片生成 —— */
   "imageProviderId": "",      // 生图提供商 id（留空自动选）

@@ -60,10 +60,10 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 | 文件 | 职责 |
 |---|---|
 | `app-methods-core.js` | 应用设置、plus 初始化、返回键、版本/更新检查、远程默认配置拉取与应用 |
-| `app-methods-sessions.js` | 会话管理、`displayFlow`（思考/工具卡片按 `_step` 交错合并渲染） |
+| `app-methods-sessions.js` | 会话管理、`displayFlow`（思考/工具/正文卡片按 `_step` 交错合并渲染） |
 | `app-methods-workspace.js` | 工作区：文件树、新建/上传/编辑/删除/导出、HTML 预览 |
-| `app-methods-generation.js` | 文本/图片生成流程（多轮工具调用、流式正文累计、思考/工具卡片） |
-| `app-helpers.js` | 共享纯函数：`smoothText` 逐字动画（按积压比例揭示）、`syncReasoning`/`finalizeReasoning` 思考卡片、`syncStreamToolCalls`/`finalizeStreamToolCalls` 工具卡片（卡片均带 `_step` 保留所属轮次，供 `displayFlow` 排序）、variant 快照等 |
+| `app-methods-generation.js` | 文本/图片生成流程（多轮工具调用、流式正文累计、思考/工具卡片、`contentSteps` 按 step 记录正文、`historyToApiMessages` 历史消息按 step 拆分回放） |
+| `app-helpers.js` | 共享纯函数：`smoothText` 逐字动画（按积压比例揭示）、`syncReasoning`/`finalizeReasoning` 思考卡片（`finalizeReasoning` 可带思考块 signature）、`syncStreamToolCalls`/`finalizeStreamToolCalls` 工具卡片（卡片均带 `_step` 保留所属轮次，供 `displayFlow` 排序）、variant 快照等 |
 | `app-methods-theme.js` | 主题 |
 | `app-methods-onboarding.js` | 首次引导 |
 | `app-methods-lock.js` | 应用锁 |
@@ -87,7 +87,17 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 - `content`：当前 step 的**完整**正文（非增量，由调用方用 `lastSeenLen` 追增量累计）
 - `reasoning`：当前 step 的**完整**思考内容（thinking / reasoning delta）
 - `streamTools`：流式工具调用（参数增量中，`input_json_delta`）
+- `reasoningSignature`：当前 step 思考块的 Anthropic signature（从 `signature_delta` 累积，供下一轮回放）
 - API 层只做事件解析与累计，**不碰 UI**；渲染/动画完全由应用层（§3.9）负责
+
+**Anthropic 提示缓存（prompt caching）**：
+- `sendAnthropic` 默认（`settings.promptCache !== false`）在 system、最后一个工具、最后一个 user 消息上打 `cache_control: {type:'ephemeral'}` 断点，缓存整个会话前缀；
+- 缓存命中依赖**请求前缀字节级稳定**：思考块（thinking + signature）、`tool_use`、`tool_result` 必须按真实对话原样回放，任何一处丢失/变化都会导致缓存失效。
+
+**历史回放（缓存前缀稳定性的关键）**：
+- assistant 消息回放 `thinking` 块（带 signature；无签名降级为文本，避免 API 拒绝）、`text`、`tool_use` 块；
+- `role:'tool'` 消息转为 user 消息里的 `tool_result` 块（相邻合并，带 `is_error`）；
+- 空文本块被过滤（`{type:'text', text:''}` 不发送），避免无效内容破坏前缀。
 
 > 注意：推理模型（如 deepseek-v4-flash）可能**大部分 SSE 事件都是 thinking delta，正文 content 为空**——
 > 这会导致纯文本区域长时间无更新，需要思考卡片（§3.9）来呈现实时进度。
@@ -124,15 +134,16 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 2. **生成层（`app-methods-generation.js` `generateAssistant`）**：
    - `accumulatedContent` / `accumulatedReasoning` 跨 step 累计（`lastSeenLen` 追增量，避免多轮工具调用覆盖正文）；
    - `currentStepReasoning` 按 step 独立追踪，供思考卡片使用；
+   - 每 step 结束把该 step 的完整正文写入 `assistantMsg.contentSteps`（`{id, text, _step}`），供 UI 按 step 交错展示与后续请求按 step 回放；
    - 每事件调用 `smoothText()`（正文动画）与 `syncReasoning()`（思考卡片实时更新）+ `syncStreamToolCalls()`（工具卡参数增量）。
 3. **动画层（`app-helpers.js` `smoothText`）**：`setInterval(24ms)` 按**积压比例**揭示正文：
    - `step = max(1, min(60, ceil(rest/10)))`：积压越大揭示越快，流式速率高时保持 ~20-35 字符小积压，结束后 ~0.5s 排空；
    - 旧实现按固定档位（1-12 字符/24ms）揭示，流式快时积压越来越大，表现为"结束后才慢慢滚动"。
 4. **渲染层（Vue 模板 `index.html`）**：每条 assistant 消息包含：
-   - **思考/工具卡片交错渲染**（`displayFlow(m)` 合并 `m.reasonings` + `m.toolCalls` 按 `_step` 排序，同一轮内思考先于工具）：保证多轮工具调用显示为 思考1 → 工具1 → 思考2 → 正文，而不是思考全部排在工具前面；
-   - **思考卡片**（`m.reasonings`，每 step 一张）：紫色左边框、状态"思考中（spinner）/ 完成"、文字随 SSE 实时增长；流式期间默认展开，`finalizeReasoning` 完成后自动折叠（可点击展开回顾）；
+   - **思考/工具/正文交错渲染**（`displayFlow(m)` 合并 `m.reasonings` + `m.toolCalls` + `m.contentSteps`，按 `_step` 排序；同一 step 内顺序：思考 → 工具 → 正文）：保证多轮工具调用显示为 思考1 → 工具1 → 消息1 → 思考2 → 工具2 → 总结消息，而不是思考全部排在工具前面/正文堆在最后；
+   - **思考卡片**（`m.reasonings`，每 step 一张）：紫色左边框、状态“思考中（spinner）/ 完成”、文字随 SSE 实时增长；流式期间默认展开，`finalizeReasoning` 完成后自动折叠（可点击展开回顾）；
    - **工具调用卡片**（`m.toolCalls`）：composing/running/done 状态；
-   - **正文**（`m.content`，`renderMd(m)` 渲染）：`v-html` markdown，由 smoothText 逐字揭示。
+   - **正文**：新消息按 step 拆分展示（`renderStepMd(f.item.text)` 渲染 `contentSteps` 中的完整正文）；旧消息（无 `contentSteps`）整段显示；流式期间 `finalContentText(m)` 只显示尚未进入 `contentSteps` 的尾部增量（`streamingContentTail`，用 `MD.renderStreaming` 处理未闭合代码围栏）。
 
 > 推理模型（如 deepseek-v4-flash）常把大部分 SSE 事件用于 thinking delta，正文 content 为空；
 > 若没有思考卡片，用户会看到"思考中…"长时间无变化，误以为卡死。
@@ -178,4 +189,5 @@ cp wepchat.config.json.template wepchat.config.json
 4. 流式渲染链路（§3.9）四层：`api.js` SSE 解析 → `generateAssistant` 累计 → `smoothText` 动画 → Vue 模板。排查"流式期间 UI 不更新"时按 `[SSE]/[Stream]/[Smooth]/[Render]` 四类日志逐层定位。
 5. 修改 `smoothText` 的揭示步进时注意：固定小步进在快速流式下会积压，导致"结束后才慢慢滚动"；应按积压比例（`rest/10`）步进。
 6. 思考内容用 `m.reasonings`（每 step 一张卡片），不要只存 `m.reasoning` 单个字符串——推理模型可能大部分 SSE 事件都是 thinking，没有卡片用户会误以为卡死。
-7. **Vue3 响应式陷阱（raw vs Proxy）**：本项目实际使用 Vue 3.4（`libs/vue.global.prod.js`，Proxy 响应式），不是 Vue2。往 `session.messages` push 新消息时，局部变量持有的是 **raw 对象**，而模板渲染拿到的是 **Proxy**；流式期间直接改 raw 对象（`syncReasoning`、`msg.reasoning = ...`、`msg.status = ...`）**不会触发重渲染**，表现为“SSE 正常到达但思考卡片/正文不更新，结束后才一次性出现”。正确写法是 push 后从响应式数组读回 Proxy 再修改：`assistantMsg = this.session.messages[this.session.messages.length - 1]`（见 `sendImageMessage` 与 `generateAssistant` 新消息分支）。重新生成分支（`this.session.messages[targetIndex]`）天然是 Proxy，无需处理。
+7. **请求前缀稳定性（缓存命中关键）**：发送给 API 的历史消息必须与真实对话逐字节一致——assistant 的思考块（带 signature）、`tool_use`、`tool_result` 都要回放。构建历史统一走 `generateAssistant` 的 `historyToApiMessages()`（按 step 拆分：每条 assistant 携带该 step 的 `reasonings` + `toolCalls` + 正文，随后紧跟 `role:'tool'` 结果消息），**不要**手工拼 `{role:'assistant', content, reasoning}` 而丢掉 toolCalls/thinking。
+8. **Vue3 响应式陷阱（raw vs Proxy）**：本项目实际使用 Vue 3.4（`libs/vue.global.prod.js`，Proxy 响应式），不是 Vue2。往 `session.messages` push 新消息时，局部变量持有的是 **raw 对象**，而模板渲染拿到的是 **Proxy**；流式期间直接改 raw 对象（`syncReasoning`、`msg.reasoning = ...`、`msg.status = ...`）**不会触发重渲染**，表现为“SSE 正常到达但思考卡片/正文不更新，结束后才一次性出现”。正确写法是 push 后从响应式数组读回 Proxy 再修改：`assistantMsg = this.session.messages[this.session.messages.length - 1]`（见 `sendImageMessage` 与 `generateAssistant` 新消息分支）。重新生成分支（`this.session.messages[targetIndex]`）天然是 Proxy，无需处理。

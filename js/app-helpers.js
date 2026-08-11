@@ -39,6 +39,8 @@
           v.id = v.id || (idx === 0 ? m.variantBaseId : U.uuid());
           v.content = String(v.content || '');
           v.reasoning = String(v.reasoning || '');
+          v.reasonings = Array.isArray(v.reasonings) ? v.reasonings : [];
+          v.contentSteps = Array.isArray(v.contentSteps) ? v.contentSteps : [];
           v.toolCalls = Array.isArray(v.toolCalls) ? v.toolCalls : [];
           v.previews = Array.isArray(v.previews) ? v.previews : [];
           v.images = Array.isArray(v.images) ? v.images : [];
@@ -506,7 +508,7 @@
     return r;
   }
 
-  function finalizeReasoning(msg, step, text) {
+  function finalizeReasoning(msg, step, text, signature) {
     if (!msg) return;
     const list = msg.reasonings || [];
     const key = 'reasoning_step_' + step;
@@ -517,6 +519,7 @@
     }
     if (r) {
       r.text = text || r.text || '';
+      if (signature) r.signature = signature; // 思考块签名：回放时保持缓存前缀一致
       r.status = 'done';
       r._open = false; // 完成后自动折叠
       r._step = step;

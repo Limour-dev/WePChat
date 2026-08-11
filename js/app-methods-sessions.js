@@ -772,10 +772,11 @@
       displayReasonings(m) {
         return (m && Array.isArray(m.reasonings) ? m.reasonings : []).filter(r => r && r.text);
       },
-      // 按 step 交错合并思考卡片与工具卡片：思考1 → 工具1 → 思考2 → 回答
-      // 同一 step 内思考先于工具（模型先输出 reasoning delta 再输出工具参数）
+      // 按 step 交错合并思考/工具/正文：思考1 → 工具1 → 消息1 → 思考2 → 工具2 → 总结消息
+      // 同一 step 内顺序：思考 → 工具 → 正文（模型先输出 reasoning delta 再输出工具参数）
       displayFlow(m) {
         const items = [];
+        const kindRank = { reasoning: 0, tool: 1, content: 2 };
         (m && Array.isArray(m.reasonings) ? m.reasonings : []).forEach(r => {
           if (!r || !r.text) return;
           items.push({
@@ -792,8 +793,37 @@
             item: t
           });
         });
-        items.sort((a, b) => (a.step - b.step) || (a.kind === b.kind ? 0 : (a.kind === 'reasoning' ? -1 : 1)));
+        (m && Array.isArray(m.contentSteps) ? m.contentSteps : []).forEach(s => {
+          if (!s || !s.text) return;
+          items.push({
+            kind: 'content',
+            step: s._step != null ? s._step : 0,
+            item: s
+          });
+        });
+        items.sort((a, b) => (a.step - b.step) || ((kindRank[a.kind] != null ? kindRank[a.kind] : 9) - (kindRank[b.kind] != null ? kindRank[b.kind] : 9)));
         return items;
+      },
+      /* 渲染某一 step 的正文（完整 markdown，非流式增量） */
+      renderStepMd(text, streaming) {
+        text = String(text || '');
+        return streaming ? MD.renderStreaming(text) : MD.render(text);
+      },
+      /* 流式期间尚未进入 contentSteps 的正文尾部（当前 step 的增量部分） */
+      streamingContentTail(m) {
+        if (!m || m.status !== 'streaming' || !m.content) return '';
+        const steps = Array.isArray(m.contentSteps) ? m.contentSteps : [];
+        let doneLen = 0;
+        steps.forEach(s => { if (s && s.text) doneLen += s.text.length; });
+        return m.content.slice(doneLen) || '';
+      },
+      /* 正文展示：旧消息（无 contentSteps）整段显示；新消息完成后按 step 展示，流式只显示尾部 */
+      finalContentText(m) {
+        if (!m || !m.content) return '';
+        const hasSteps = Array.isArray(m.contentSteps) && m.contentSteps.some(s => s && s.text);
+        if (!hasSteps) return m.content;
+        if (m.status === 'streaming') return this.streamingContentTail(m);
+        return '';
       },
       toolTitle(t) {
         const name = String(t && t.name || '');
@@ -835,6 +865,7 @@
           content: String(m.content || ''),
           reasoning: String(m.reasoning || ''),
           reasonings: clone(Array.isArray(m.reasonings) ? m.reasonings : []),
+          contentSteps: clone(Array.isArray(m.contentSteps) ? m.contentSteps : []),
           toolCalls: clone(Array.isArray(m.toolCalls) ? m.toolCalls : []),
           previews: clone(Array.isArray(m.previews) ? m.previews : []),
           images: clone(Array.isArray(m.images) ? m.images : []),
@@ -877,6 +908,7 @@
         m.content = v.content || '';
         m.reasoning = v.reasoning || '';
         m.reasonings = clone(Array.isArray(v.reasonings) ? v.reasonings : []);
+        m.contentSteps = clone(Array.isArray(v.contentSteps) ? v.contentSteps : []);
         m.toolCalls = clone(v.toolCalls || []);
         m.previews = clone(v.previews || []);
         m.images = clone(v.images || []);
