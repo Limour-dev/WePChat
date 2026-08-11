@@ -230,6 +230,9 @@ const API = (() => {
         } else out.push({ role: 'user', content: text });
       } else if (m.role === 'assistant') {
         const am = { role: 'assistant', content: m.content || '' };
+        /* 回放思考内容：DeepSeek/Qwen 等 OpenAI 兼容推理模型要求历史里带 reasoning_content，
+         * 且回放后请求前缀与真实对话逐字节一致，缓存命中友好（无思考时不发该字段，保持稳定） */
+        if (m.reasoning) am.reasoning_content = m.reasoning;
         if (m.toolCalls && m.toolCalls.length) {
           am.tool_calls = m.toolCalls.map(t => ({
             id: t.id, type: 'function',
@@ -304,6 +307,8 @@ const API = (() => {
         imagesOf(m).forEach(a => parts.push({ type: 'input_image', image_url: a.dataUrl }));
         out.push({ role: 'user', content: parts });
       } else if (m.role === 'assistant') {
+        /* 回放思考摘要：Responses 支持 reasoning 输入项，回放后前缀与真实对话一致，缓存命中友好（无思考时不发） */
+        if (m.reasoning) out.push({ type: 'reasoning', summary: [{ type: 'summary_text', text: m.reasoning }] });
         if (m.content) out.push({ role: 'assistant', content: [{ type: 'output_text', text: m.content }] });
         (m.toolCalls || []).forEach(t => out.push({ type: 'function_call', call_id: t.id, name: t.name, arguments: t.arguments || '{}' }));
       } else if (m.role === 'tool') {

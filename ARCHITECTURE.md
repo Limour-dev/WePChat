@@ -90,14 +90,20 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 - `reasoningSignature`：当前 step 思考块的 Anthropic signature（从 `signature_delta` 累积，供下一轮回放）
 - API 层只做事件解析与累计，**不碰 UI**；渲染/动画完全由应用层（§3.9）负责
 
+**无状态全量发送**：三种 API（openai-chat / openai-responses / anthropic）都不保存会话，每次请求发送**完整历史** `messages` / `input` 数组；控制成本靠 prompt cache 而非增量发送。
+
+**缓存命中 = 请求前缀字节级稳定**：
+- `openai-chat`：assistant 消息回放 `reasoning_content`（DeepSeek/Qwen 等 OpenAI 兼容推理模型要求历史带思考内容；无思考时不发该字段）、`tool_calls` 原样回放；`role:'tool'` 消息按 `tool_call_id` 紧跟对应 assistant 消息；
+- `openai-responses`：input 按 `user → reasoning → output_text → function_call → function_call_output` 顺序回放（`reasoning` 输入项 `{type:'reasoning', summary:[{type:'summary_text', text}]}` 保持前缀与真实对话一致；空 `output_text` 不发送）；
+- `anthropic`：assistant 回放 `thinking` 块（带 signature；无签名降级为文本，避免 API 拒绝）、`text`、`tool_use` 块；`role:'tool'` 转为 user 消息里的 `tool_result` 块（相邻合并，带 `is_error`）；空文本块被过滤。
+
 **Anthropic 提示缓存（prompt caching）**：
 - `sendAnthropic` 默认（`settings.promptCache !== false`）在 system、最后一个工具、最后一个 user 消息上打 `cache_control: {type:'ephemeral'}` 断点，缓存整个会话前缀；
-- 缓存命中依赖**请求前缀字节级稳定**：思考块（thinking + signature）、`tool_use`、`tool_result` 必须按真实对话原样回放，任何一处丢失/变化都会导致缓存失效。
+- OpenAI Chat Completions / Responses 的 prompt caching 由服务端自动处理（无需客户端标记），缓存命中同样依赖上述前缀字节级稳定。
 
-**历史回放（缓存前缀稳定性的关键）**：
-- assistant 消息回放 `thinking` 块（带 signature；无签名降级为文本，避免 API 拒绝）、`text`、`tool_use` 块；
-- `role:'tool'` 消息转为 user 消息里的 `tool_result` 块（相邻合并，带 `is_error`）；
-- 空文本块被过滤（`{type:'text', text:''}` 不发送），避免无效内容破坏前缀。
+**历史回放（历史消息统一走 `historyToApiMessages`）**：
+- 按 step 拆分：每条 assistant 携带该 step 的 `reasonings`（含 signature）+ `toolCalls` + 正文（`contentSteps`），随后紧跟该 step 的 `role:'tool'` 结果消息；
+- 旧消息（无 `contentSteps`/`reasonings` 数组）整条作为单 step 回放；仅有 `reasoning` 字符串时合成 `[{text, _step:0}]`，三个 API 统一回放思考（Anthropic 无签名降级为文本）。
 
 > 注意：推理模型（如 deepseek-v4-flash）可能**大部分 SSE 事件都是 thinking delta，正文 content 为空**——
 > 这会导致纯文本区域长时间无更新，需要思考卡片（§3.9）来呈现实时进度。
@@ -189,5 +195,5 @@ cp wepchat.config.json.template wepchat.config.json
 4. 流式渲染链路（§3.9）四层：`api.js` SSE 解析 → `generateAssistant` 累计 → `smoothText` 动画 → Vue 模板。排查"流式期间 UI 不更新"时按 `[SSE]/[Stream]/[Smooth]/[Render]` 四类日志逐层定位。
 5. 修改 `smoothText` 的揭示步进时注意：固定小步进在快速流式下会积压，导致"结束后才慢慢滚动"；应按积压比例（`rest/10`）步进。
 6. 思考内容用 `m.reasonings`（每 step 一张卡片），不要只存 `m.reasoning` 单个字符串——推理模型可能大部分 SSE 事件都是 thinking，没有卡片用户会误以为卡死。
-7. **请求前缀稳定性（缓存命中关键）**：发送给 API 的历史消息必须与真实对话逐字节一致——assistant 的思考块（带 signature）、`tool_use`、`tool_result` 都要回放。构建历史统一走 `generateAssistant` 的 `historyToApiMessages()`（按 step 拆分：每条 assistant 携带该 step 的 `reasonings` + `toolCalls` + 正文，随后紧跟 `role:'tool'` 结果消息），**不要**手工拼 `{role:'assistant', content, reasoning}` 而丢掉 toolCalls/thinking。
+7. **请求前缀稳定性（缓存命中关键）**：发送给 API 的历史消息必须与真实对话逐字节一致——assistant 的思考块（Anthropic thinking + signature；openai-chat 的 `reasoning_content`；openai-responses 的 `reasoning` 输入项）、`tool_use`/`tool_calls`/`function_call`、`tool_result` 都要按真实顺序回放。构建历史统一走 `generateAssistant` 的 `historyToApiMessages()`（按 step 拆分：每条 assistant 携带该 step 的 `reasonings` + `toolCalls` + 正文，随后紧跟 `role:'tool'` 结果消息；旧消息仅有 `reasoning` 字符串时合成 `reasonings` 供三个 API 统一回放），**不要**手工拼 `{role:'assistant', content, reasoning}` 而丢掉 toolCalls/thinking。
 8. **Vue3 响应式陷阱（raw vs Proxy）**：本项目实际使用 Vue 3.4（`libs/vue.global.prod.js`，Proxy 响应式），不是 Vue2。往 `session.messages` push 新消息时，局部变量持有的是 **raw 对象**，而模板渲染拿到的是 **Proxy**；流式期间直接改 raw 对象（`syncReasoning`、`msg.reasoning = ...`、`msg.status = ...`）**不会触发重渲染**，表现为“SSE 正常到达但思考卡片/正文不更新，结束后才一次性出现”。正确写法是 push 后从响应式数组读回 Proxy 再修改：`assistantMsg = this.session.messages[this.session.messages.length - 1]`（见 `sendImageMessage` 与 `generateAssistant` 新消息分支）。重新生成分支（`this.session.messages[targetIndex]`）天然是 Proxy，无需处理。

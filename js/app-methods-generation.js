@@ -44,12 +44,13 @@
           reasonings.forEach(r => { if (r._step != null) steps.add(r._step); });
           toolCalls.forEach(t => { if (t._step != null) steps.add(t._step); });
           if (!steps.size) {
-            /* 旧消息：整条作为单 step */
+            /* 旧消息：整条作为单 step；无 reasonings 但有 reasoning 字符串时合成一条（供 Anthropic/OpenAI 回放思考，前缀稳定） */
+            const oldReasonings = reasonings.length ? reasonings : (m.reasoning ? [{ text: m.reasoning, _step: 0 }] : []);
             out.push({
               role: 'assistant',
               content: m.content || '',
               reasoning: m.reasoning || '',
-              reasonings,
+              reasonings: oldReasonings,
               toolCalls: toolCalls.map(t => ({ id: t.id, name: t.name, arguments: t.arguments || '{}' }))
             });
             toolCalls.forEach(t => {
