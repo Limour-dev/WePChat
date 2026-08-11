@@ -2,6 +2,7 @@
 'use strict';
 
 (() => {
+  const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){} };
   const { nextTick } = Vue;
   function clone(obj) {
     return JSON.parse(JSON.stringify(obj));
@@ -400,6 +401,8 @@
     target = String(target || '');
     TextTargets.set(id, target);
     if (TextTimers.has(id)) return;
+    let commitTicks = 0;
+    L.debug('Smooth', 'timer start id=' + id.slice(0, 6) + ' targetLen=' + target.length);
     const timer = setInterval(() => {
       const full = TextTargets.get(id) || '';
       let cur = viewMsg.content || '';
@@ -412,11 +415,15 @@
         clearInterval(timer);
         TextTimers.delete(id);
         TextTargets.delete(id);
+        L.debug('Smooth', 'timer done id=' + id.slice(0, 6) + ' shown=' + (viewMsg.content || '').length + ' target=' + full.length);
         resolveTyping(id);
         return;
       }
-      const step = rest.length > 6000 ? 12 : rest.length > 2500 ? 6 : rest.length > 900 ? 3 : rest.length > 240 ? 2 : 1;
+      const step = Math.max(1, Math.min(60, Math.ceil(rest.length / 10)));
       viewMsg.content = cur + rest.slice(0, step);
+      if (++commitTicks % 20 === 0) {
+        L.debug('Smooth', 'commit id=' + id.slice(0, 6) + ' shown=' + (viewMsg.content || '').length + ' target=' + full.length + ' rest=' + rest.length);
+      }
       if (vm && typeof vm.persistSessionSoon === 'function') vm.persistSessionSoon();
       nextTick(() => vm.scrollToBottom(false));
     }, 24);

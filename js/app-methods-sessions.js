@@ -723,6 +723,13 @@
       },
 
       renderMd(m) {
+        if (m.status === 'streaming' && m.content) {
+          const nowLog = Date.now();
+          if (nowLog - (this._renderLogAt || 0) >= 500) {
+            this._renderLogAt = nowLog;
+            L.debug('Render', 'renderMd streaming contentLen=' + (m.content || '').length);
+          }
+        }
         return m.status === 'streaming' ? MD.renderStreaming(m.content || '') : MD.render(m.content || '');
       },
       toolLabel(name) {

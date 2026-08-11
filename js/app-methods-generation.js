@@ -416,6 +416,8 @@
         let accumulatedReasoning = '';
         let stepSeenLen = 0;
         let stepSeenReasoningLen = 0;
+        let updateEventCount = 0;
+        let lastUpdateLogAt = 0;
         const addUsage = usage => {
           if (!usage) return;
           usageTotals.inputTokens += Number(usage.inputTokens) || 0;
@@ -438,10 +440,16 @@
               onStatus: info => this.connectionStatus(Object.assign({ source: '模型提供商' }, info || {})),
               onUpdate: st => {
                 // st.content / st.reasoning 是本 step 的完整正文；追增量拼入累计正文
+                updateEventCount++;
                 const sc = st.content || '';
                 if (sc.length > stepSeenLen) { accumulatedContent += sc.slice(stepSeenLen); stepSeenLen = sc.length; }
                 const sr = st.reasoning || '';
                 if (sr.length > stepSeenReasoningLen) { accumulatedReasoning += sr.slice(stepSeenReasoningLen); stepSeenReasoningLen = sr.length; }
+                const nowLog = Date.now();
+                if (updateEventCount === 1 || updateEventCount % 50 === 0 || nowLog - lastUpdateLogAt >= 1000) {
+                  lastUpdateLogAt = nowLog;
+                  L.debug('Stream', 'onUpdate step=' + step + ' ev=' + updateEventCount + ' st.content=' + sc.length + ' acc=' + accumulatedContent.length + ' st.reasoning=' + sr.length + ' accR=' + accumulatedReasoning.length + ' tools=' + ((st.streamTools || []).length) + ' msg.content=' + (assistantMsg.content || '').length);
+                }
                 smoothText(this, assistantMsg, accumulatedContent);
                 assistantMsg.reasoning = accumulatedReasoning;
                 if (st.streamTools && st.streamTools.length) syncStreamToolCalls(assistantMsg, st.streamTools, step);
