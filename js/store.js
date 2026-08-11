@@ -126,10 +126,10 @@ const Store = {
       webFetch: 'ask',               // ask | always | never
       toolPermissions: {
         run_js: 'ask',
-        files: 'ask',
-        delete_files: 'ask',
-        services: 'ask',
-        web_fetch: 'ask'
+        files: 'never',
+        delete_files: 'never',
+        services: 'never',
+        web_fetch: 'never'
       },
       imageProviderId: '',
       imageModel: '',
@@ -138,7 +138,7 @@ const Store = {
       imageQuality: 'auto',           // auto | high | medium | low
       imageBackground: 'auto',        // auto | transparent | opaque
       imageDefaultCount: 1,
-      imagePermission: 'ask',        // ask | always | never
+      imagePermission: 'never',      // ask | always | never（默认禁用 agent 的 image_go 工具；不影响手动生图工作台）
       imageOutputFormat: 'png',
       imageStylePresetId: '',
       imageStylePresets: [

@@ -6,10 +6,16 @@
   window.WepChatAppMethodsGeneration = {
       settingsForRequest(tools) {
         const s = Object.assign({}, this.settings);
-        if (tools && tools.length) {
-          s.systemPrompt = [this.settings.systemPrompt, Tools.SYSTEM_HINT].filter(Boolean).join('\n\n');
-        }
+        // 系统提示词仅使用设置里的值；不自动附加内置 Tools.SYSTEM_HINT（去掉系统提示词）
+        if (!s.systemPrompt) delete s.systemPrompt;
         return s;
+      },
+      // 按工具权限过滤，只暴露未禁用（非 never）的工具给模型；默认仅 run_js 开启
+      enabledTools() {
+        const all = Tools.DEFS || [];
+        return all.filter(d => {
+          try { return this.toolPermission(d.name) !== 'never'; } catch (e) { return true; }
+        });
       },
       apiBaseMessages() {
         return this.session.messages
@@ -388,7 +394,7 @@
             }
             return clone(m);
           });
-        const tools = this.settings.agentEnabled && API.supportsTools(provider) ? Tools.DEFS : [];
+        const tools = this.settings.agentEnabled && API.supportsTools(provider) ? this.enabledTools() : [];
         const reqSettings = this.settingsForRequest(tools);
 
         this.generating = true;

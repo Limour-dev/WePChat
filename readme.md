@@ -77,7 +77,7 @@ WePChat 当前是静态前端项目：
 
 WePChat 内置 Agent 工具是受控的轻量工具集，不提供真实 shell、Node.js 包管理器、Python 环境或完整 Linux。
 
-当前模型可见工具包括：
+**默认只开启 `run_js` 一个工具**（其余工具在设置 → 工具权限里改为 `ask`/`always` 后启用）：
 
 - `run_js`：隔离 JavaScript 沙盒。需要读取工作区文件时，必须通过 `inputFiles` 显式挂载。
 - `list_files` / `read_file` / `write_file` / `edit_file`：工作区文件查看、读取、写入和修改。
@@ -86,6 +86,7 @@ WePChat 内置 Agent 工具是受控的轻量工具集，不提供真实 shell�
 - `web_fetch`：GET/POST 抓取网页或接口文本，POST 会额外确认。
 - `image_go`：生成或编辑图片。
 
+By default WePChat 不发送系统提示词，仅当你在设置里显式填写了「系统提示词」时才会随请求发送。
 工具说明和系统提示词快照见 `docs/tools.md`。
 
 ## 本地运行

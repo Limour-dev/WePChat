@@ -57,14 +57,14 @@
   "maxToolCalls": 24,         // 最大工具调用数
 
   /* —— 工具 / 网页访问权限 —— */
-  "webFetch": "ask",          // 网页访问 ask | always | never（历史兼容字段）
+  "webFetch": "never",        // 网页访问 ask | always | never（默认 only run_js 场景下关闭）
   "toolPermissions": {
-    "run_js": "ask",          // JavaScript 沙盒 ask | always | never
-    "files": "ask",           // 工作区文件 ask | always | never
-    "delete_files": "ask",    // 删除工作区文件/文件夹 ask | never
-    "services": "ask",        // 工作区服务 ask | always | never
-    "web_fetch": "ask",       // 网页访问 ask | always | never
-    "image_go": "ask"         // 图片生成（常规模式转交生图）ask | always | never
+    "run_js": "ask",          // JavaScript 沙盒 ask | always | never（默认唯一开启的工具）
+    "files": "never",         // 工作区文件 ask | always | never
+    "delete_files": "never",  // 删除工作区文件/文件夹 ask | never
+    "services": "never",      // 工作区服务 ask | always | never
+    "web_fetch": "never",     // 网页访问 ask | always | never
+    "image_go": "never"      // 图片生成（常规模式转交生图）ask | always | never（默认为禁用）
   },
 
   /* —— 对话参数 —— */
@@ -81,7 +81,7 @@
   "imageBackground": "auto",  // 背景 auto | transparent | opaque
   "imageDefaultCount": 1,     // 默认生成数量 1~8
   "imageOutputFormat": "png", // 输出格式 png | webp | jpeg
-  "imagePermission": "ask",   // 图片生成权限 ask | always | never
+  "imagePermission": "never", // 图片生成权限 ask | always | never（默认禁用 agent 的 image_go；不影响手动生图工作台）
   "imageStylePresetId": "",   // 默认风格预设 id（留空无预设）
   "imageApiMode": "images",   // 图像 API 模式 images | auto | chat | responses
   "imageEndpointPath": "",    // 生图路径覆盖，如 /v1/images/generations

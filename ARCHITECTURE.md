@@ -12,6 +12,8 @@ WePChat/
 ├── index.html             # 手机端(SWD)入口 —— 单页 Vue2 应用，全部靠 <script> 顺序加载
 ├── manifest.json          # HBuilderX / HTML5+ 配置（Android 打包、权限、App 元信息）
 ├── androidPrivacy.json    # Android 隐私合规配置
+├── server.py              # 本地静态服务器（带 CORS 头，用于远程配置拉取等跨域场景）
+├── wepchat.config.json.template  # 远程默认配置模板（JSONC，含全部配置项注释；实际使用复制为 wepchat.config.json，已 gitignore）
 ├── css/                   # 手机端样式（app.css 主样式 + liquid-glass + onboarding）
 ├── js/                    # 手机端全部逻辑（~10k 行，普通旧式脚本，非 ESM）
 │   ├── app.js             # 入口：await Store.init() → 装配 methods → Vue.createApp().mount()
@@ -30,7 +32,6 @@ WePChat/
 ├── libs/                  # 第三方库（vue 全局版、marked、purify、highlight、liquid-glass）
 ├── img/                   # 图标与截图
 └── docs/                  # 手机端设计/拆分/备份等文档
-```
 
 ---
 
@@ -67,7 +68,7 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 ### 3.3 功能域（`js/app-methods-*.js`）
 | 文件 | 职责 |
 |---|---|
-| `app-methods-core.js` | 应用设置、plus 初始化、返回键、版本/更新检查 |
+| `app-methods-core.js` | 应用设置、plus 初始化、返回键、版本/更新检查、远程默认配置拉取与应用 |
 | `app-methods-sessions.js` | 会话管理 |
 | `app-methods-workspace.js` | 工作区：文件树、新建/上传/编辑/删除/导出、HTML 预览 |
 | `app-methods-generation.js` | 文本/图片生成流程 |
@@ -97,6 +98,14 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 - 每个工具一个文件：`run-js.js`（隔离沙盒）、`read-file/write-file/edit-file/delete-file/list-files/create-folder/move-path/path-exists`、`preview-file`、`web-fetch`、`image-go`、`create-workspace`、`run-service/stop-service/list-services`、`system-hint`。
 - `tools.js` 是兼容门面，把 `WepChatTools` 暴露成 `window.Tools`（`DEFS/SYSTEM_HINT/execute/runJS/...`）。
 - **边界**：内置工具是受控轻量工具集，不提供真实 shell / 包管理器 / Python / 完整 Linux。
+- **默认只开 `run_js`**：`app-methods-generation.js` 的 `enabledTools()` 按 `toolPermission(d.name) !== 'never'` 过滤 `Tools.DEFS`；默认 `toolPermissions` 仅 `run_js: 'ask'`，其余 (`files`/`delete_files`/`services`/`web_fetch`) 均为 `never`，`image_go` 则受默认 `imagePermission: 'never'` 门控。用户可在设置里把对应工具改为 `ask`/`always` 以启用。
+- **系统提示词**：仅发送设置里显式填写的 `systemPrompt`；不自动附加内置 `Tools.SYSTEM_HINT`。
+
+### 3.7 远程默认配置（`server.py` + `wepchat.config.json.template`）
+用于从服务器拉取 JSON 配置作为应用默认设置，方便团队/多设备统一配置。
+- `wepchat.config.json.template`：带注释（JSONC）的配置模板，含全部配置项；实际使用复制为 `wepchat.config.json`（已加入 `.gitignore`）放到服务器。
+- 应用侧逻辑在 `app-methods-core.js`：`fetchRemoteConfig()` 用 XHR GET 拉取 URL，`stripJsonComments()` 剥离 `//` 与 `/* */` 注释后再 `JSON.parse`；`applyRemoteConfigAsDefaults()` 与现有设置合并（含 providers 去重/规范化）后持久化。
+- `server.py`：本地静态服务器，为所有响应加 CORS 头并处理 `OPTIONS` 预检，解决 WebView / 浏览器拉取远程配置时的跨域拦截（默认端口 8765）。
 ---
 
 ## 4. 手机端文档（`docs/`）
@@ -123,9 +132,11 @@ node --check js/app.js && node --check js/api.js && node --check js/image-api.js
   && node --check js/tools.js && node --check js/store.js && node --check js/util.js \
   && node --check js/model-metadata.js
 
-# 本地静态预览手机端
-python -m http.server 8765   # 打开 http://127.0.0.1:8765/
-```
+# 本地静态预览手机端（推荐自带 CORS 的 server.py，支持远程配置拉取）
+python3 server.py 8765   # 打开 http://127.0.0.1:8765/
+
+# 远程默认配置模板（复制去掉 .template 后缀，已 gitignore）
+cp wepchat.config.json.template wepchat.config.json
 
 `git diff --check` 用于提交前空白检查。手机端 `node --check` 只校验语法可解析，不执行（浏览器 API 在 Node 下不存在）。
 
