@@ -2,6 +2,7 @@
 'use strict';
 
 (() => {
+  const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } };
   const { nextTick, clone, cleanTitle, normalizeSession, newProvider, parseModels, modelsText, imageModelsText, providerModelMeta, tokenMessageText, imageExtForMime, imageFileName, attachmentFileName, fileSafeName, normalizeWorkspacePath, parentFolder, ensureParentFolders, workspaceMime, workspaceExt, isHtmlName, isMarkdownName, isImageName, isJsName, RELEASES_URL, LATEST_RELEASE_API, normalizeAppVersion, appTag, parseReleaseTag, compareReleaseTags, formatReleaseDate, fetchLatestRelease, plusRuntimeVersion, manifestVersion, normalizeStylePreset, isEditableName, languageForName, resolveWorkspaceRef, dataUrlDownload, readPickedFile, escapeScriptEnd, isExternalRef, externalWebUrl, normalizeRef, htmlAttr, TextTargets, TextTimers, TextResolvers, resolveTyping, smoothText, waitSmoothText, streamToolKey, findToolDisplay, syncStreamToolCalls, clearStreamState, finalizeStreamToolCalls, discardStreamToolCalls, cancelStreamToolCalls } = window.WepChatAppHelpers;
   window.WepChatAppMethodsSessions = {
       prettyJson(val) {
@@ -136,6 +137,7 @@
         });
         if (!mode) return;
         this.session = Store.newSession();
+        L.info('Session', 'newSession id=' + this.session.id + ' mode=' + mode);
         this.session.mode = mode === 'image' ? 'image' : 'chat';
         this.session.providerId = this.settings.activeProviderId || '';
         this.persistSession();
@@ -144,6 +146,7 @@
         nextTick(() => this.scrollToBottom(true));
       },
       async openSession(id) {
+        L.info('Session', 'openSession id=' + id);
         if (id === this.session.id) {
           this.drawerOpen = false;
           return;

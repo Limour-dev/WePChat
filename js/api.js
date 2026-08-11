@@ -8,6 +8,7 @@
 'use strict';
 
 const API = (() => {
+  const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } };
 
   const API_TYPES = [
     { value: 'openai-chat', label: 'Chat Completions（OpenAI 兼容）' },
@@ -43,8 +44,8 @@ const API = (() => {
   /* ---------- SSE 流式请求（XHR 增量解析，abort 可中断） ---------- */
   function sseOnce({ url, headers, body, onEvent, signal }) {
     return new Promise((resolve, reject) => {
+      L.debug('SSE', 'POST ' + url);
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', url, true);
       xhr.setRequestHeader('Content-Type', 'application/json');
       xhr.setRequestHeader('Accept', 'text/event-stream');
       Object.keys(headers || {}).forEach(k => { try { xhr.setRequestHeader(k, headers[k]); } catch (e) {} });
@@ -57,6 +58,7 @@ const API = (() => {
         clearTimeout(idleTimer);
       };
       const failAfter = (code, message) => {
+        L.warn('SSE', code + ': ' + message + ' (received=' + seen + ')');
         forcedError = NetStability.createError(code, message, { url, receivedBytes: seen });
         try { xhr.abort(); } catch (e) { clearTimers(); reject(forcedError); }
       };
@@ -77,7 +79,7 @@ const API = (() => {
           if (line.startsWith('data:')) {
             const data = line.slice(5).trim();
             if (data === '[DONE]') continue;
-            try { onEvent(curEvent, JSON.parse(data)); } catch (e) { /* 非 JSON 行忽略 */ }
+            try { onEvent(curEvent, JSON.parse(data)); } catch (e) { L.warn('SSE', 'JSON parse error in SSE data: ' + e.message); }
           }
         }
       }
@@ -95,6 +97,7 @@ const API = (() => {
       };
       xhr.onload = () => {
         clearTimers();
+        L.debug('SSE', 'onload status=' + xhr.status + ' bytes=' + seen);
         if (aborted) return;
         if (xhr.status >= 200 && xhr.status < 300) {
           const t = xhr.responseText;
@@ -105,15 +108,19 @@ const API = (() => {
           }
           resolve();
         } else {
+          const errCode = xhr.status === 408 ? 'HTTP-408' : xhr.status === 429 ? 'HTTP-429' : xhr.status >= 500 ? 'HTTP-5XX' : 'HTTP-' + xhr.status;
+          const errMsg = extractError(xhr.responseText, xhr.status);
+          L.error('SSE', 'HTTP error ' + xhr.status + ': ' + errMsg);
           reject(NetStability.createError(
-            xhr.status === 408 ? 'HTTP-408' : xhr.status === 429 ? 'HTTP-429' : xhr.status >= 500 ? 'HTTP-5XX' : 'HTTP-' + xhr.status,
-            extractError(xhr.responseText, xhr.status),
+            errCode,
+            errMsg,
             { status: xhr.status, url, receivedBytes: seen }
           ));
         }
       };
       xhr.onerror = () => {
         clearTimers();
+        L.error('SSE', 'NET-CONNECT: 网络请求失败 url=' + url);
         reject(NetStability.createError('NET-CONNECT', '网络请求失败，请检查网络与接口地址', { url, receivedBytes: seen }));
       };
       xhr.onabort = () => {
@@ -508,6 +515,7 @@ const API = (() => {
 
   /* ---------- 对外接口 ---------- */
   function send(ctx) {
+    L.info('API', 'send api=' + ctx.provider.api + ' model=' + ctx.model + ' msgs=' + (ctx.messages || []).length + ' tools=' + (ctx.tools || []).length);
     switch (ctx.provider.api) {
       case 'openai-responses': return sendResponses(ctx);
       case 'anthropic': return sendAnthropic(ctx);
@@ -517,6 +525,7 @@ const API = (() => {
   }
 
   async function listModelsDetailed(provider) {
+    L.info('API', 'listModels provider=' + provider.name + ' api=' + provider.api);
     let url, headers;
     if (provider.api === 'anthropic') {
       const base = normBase(provider.baseUrl);

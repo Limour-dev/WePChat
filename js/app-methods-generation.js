@@ -2,6 +2,7 @@
 'use strict';
 
 (() => {
+  const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } };
   const { nextTick, clone, cleanTitle, normalizeSession, newProvider, parseModels, modelsText, imageModelsText, providerModelMeta, tokenMessageText, imageExtForMime, imageFileName, attachmentFileName, fileSafeName, normalizeWorkspacePath, parentFolder, ensureParentFolders, workspaceMime, workspaceExt, isHtmlName, isMarkdownName, isImageName, isJsName, RELEASES_URL, LATEST_RELEASE_API, normalizeAppVersion, appTag, parseReleaseTag, compareReleaseTags, formatReleaseDate, fetchLatestRelease, plusRuntimeVersion, manifestVersion, normalizeStylePreset, isEditableName, languageForName, resolveWorkspaceRef, dataUrlDownload, readPickedFile, escapeScriptEnd, isExternalRef, externalWebUrl, normalizeRef, htmlAttr, TextTargets, TextTimers, TextResolvers, resolveTyping, smoothText, waitSmoothText, streamToolKey, findToolDisplay, syncStreamToolCalls, clearStreamState, finalizeStreamToolCalls, discardStreamToolCalls, cancelStreamToolCalls } = window.WepChatAppHelpers;
   window.WepChatAppMethodsGeneration = {
       settingsForRequest(tools) {
@@ -305,6 +306,7 @@
         }
       },
       async sendMessage() {
+        L.info('Gen', 'sendMessage mode=' + this.appMode + ' inputLen=' + (this.input || '').length + ' attachments=' + (this.attachments || []).length);
         if (!this.canSend) return;
         if (this.appMode === 'image') {
           await this.sendImageMessage();
@@ -353,6 +355,7 @@
         opts = opts || {};
         const provider = this.currentProvider;
         const model = this.settings.activeModel || this.session.model || provider && provider.models[0] || '';
+        L.info('Gen', 'generateAssistant model=' + model + ' targetIndex=' + (opts.targetIndex != null ? opts.targetIndex : 'new'));
         if (!provider || !model) return;
 
         const targetIndex = Number.isInteger(opts.targetIndex) ? opts.targetIndex : -1;
@@ -423,6 +426,7 @@
 
         try {
           for (let step = 0; step <= maxToolRounds; step++) {
+            L.info('Gen', 'step=' + step + '/' + maxToolRounds + ' msgs=' + workingMessages.length + ' tools=' + tools.length);
             const result = await API.send({
               provider,
               model,
@@ -455,9 +459,9 @@
             smoothText(this, assistantMsg, accumulatedContent);
             assistantMsg.reasoning = accumulatedReasoning;
             addUsage(result.usage);
+            L.info('Gen', 'step=' + step + ' result: contentLen=' + (result.content || '').length + ' toolCalls=' + (result.toolCalls || []).length + ' usage=' + JSON.stringify(result.usage || {}));
             stepSeenLen = 0;
             stepSeenReasoningLen = 0;
-
             if (this.stopRequested) {
               cancelStreamToolCalls(assistantMsg, step);
               break;
@@ -485,6 +489,7 @@
             totalToolCalls += rawCalls.length;
 
             const displayCalls = finalizeStreamToolCalls(assistantMsg, rawCalls, step);
+            L.info('Gen', 'executing ' + displayCalls.length + ' tool calls: ' + displayCalls.map(t => t.name).join(', '));
             workingMessages.push({
               role: 'assistant',
               content: accumulatedContent || result.content || '',
@@ -512,6 +517,7 @@
               });
               t.result = out;
               t.status = String(out).startsWith('错误：') ? 'error' : 'done';
+              L.info('Gen', 'tool=' + t.name + ' status=' + t.status + ' resultLen=' + String(out || '').length);
               previousToolResults.push({ name: t.name, result: out });
               workingMessages.push({ role: 'tool', toolCallId: t.id, content: out });
               if (assistantMsg.variants && assistantMsg.variants.length) this.syncActiveAssistantVariant(assistantMsg);
@@ -533,6 +539,7 @@
             };
           }
         } catch (e) {
+          L.error('Gen', 'generateAssistant error: ' + (e && e.message || String(e)) + ' code=' + (e && e.code || ''));
           assistantMsg.status = 'done';
           if (this.stopRequested || e && e.code === 'NET-ABORTED') {
             if (!assistantMsg.content && !assistantMsg.toolCalls.length) assistantMsg.content = '已停止。';
@@ -551,6 +558,7 @@
           this.abortCtl = null;
           this.stopRequested = false;
           this.clearRunningNotification();
+          L.info('Gen', 'generateAssistant finished: status=' + assistantMsg.status + ' contentLen=' + (assistantMsg.content || '').length + ' toolCalls=' + (assistantMsg.toolCalls || []).length);
           await this.flushSessionPersist(1200);
           nextTick(() => this.scrollToBottom(false));
         }

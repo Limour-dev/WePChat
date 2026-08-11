@@ -2,8 +2,10 @@
 'use strict';
 
 (async () => {
+  console.log('[WepChat] App starting...');
   /* 存储层先就绪（IndexedDB 预热 + localStorage 旧数据迁移）再挂载应用 */
   await Store.init();
+  console.log('[WepChat] Store initialized');
 
   const options = window.WepChatAppOptions;
   options.methods = Object.assign(
@@ -42,5 +44,6 @@
     });
   });
   app.mount('#app');
+  console.log('[WepChat] Vue app mounted');
   window.WepChatSyncLiquidGlassFilters();
 })();

@@ -17,18 +17,8 @@ WePChat/
 ├── css/                   # 手机端样式（app.css 主样式 + liquid-glass + onboarding）
 ├── js/                    # 手机端全部逻辑（~10k 行，普通旧式脚本，非 ESM）
 │   ├── app.js             # 入口：await Store.init() → 装配 methods → Vue.createApp().mount()
+│   ├── logger.js          # 统一控制台埋点日志（WLog），自动脱敏、截断、分级
 │   ├── app-options.js     # Vue 根选项（data/computed/watch 等）
-│   ├── app-methods-*.js   # Vue methods 按功能域拆分（见 §3.3）
-│   ├── app-helpers.js     # 手机端共享工具函数（纯函数，多被 methods 解构使用）
-│   ├── api.js / image-api.js   # 模型 Provider 适配层 / 图片生成与编辑
-│   ├── store.js           # 本地存储层（IndexedDB + 内存缓存，旧 localStorage 迁移）
-│   ├── util.js            # 通用工具
-│   ├── markdown.js        # Markdown / 代码高亮渲染
-│   ├── model-metadata.js  # 模型能力元数据（上下文/输出/视觉/工具/图像等）
-│   ├── network-stability.js  # 重连/错误码/事件补播
-│   ├── theme-system.js    # 主题
-│   ├── tools.js           # Agent 工具「兼容门面」，转发到 WepChatTools
-│   └── tools/             # Agent 工具独立模块（registry + 每个工具一个文件）
 ├── libs/                  # 第三方库（vue 全局版、marked、purify、highlight、liquid-glass）
 ├── img/                   # 图标与截图
 └── docs/                  # 手机端设计/拆分/备份等文档
@@ -47,10 +37,11 @@ WePChat/
 所有脚本是**普通旧式 `<script>` 顺序加载**，依赖全局命名空间挂载，不是 ES module。顺序即依赖顺序：
 
 1. **第三方库**：`vue.global.prod.js`、`marked`、`purify`、`highlight`、`liquid-glass-vue`
-2. **基础层**：`util.js` → `store.js` → `markdown.js` → `model-metadata.js` → `network-stability.js`
-3. **API 层**：`api.js` → `image-api.js`
-4. **Agent 工具**：`tools/registry.js` → `tools/workspace.js` → 各工具文件 → `tools.js`（门面，暴露 `window.Tools`）
-5. **应用层**：`app-helpers.js` → `theme-system.js` → `app-options.js` → `app-methods-*.js` → `app.js`
+2. **日志层**：`logger.js`（WLog，所有模块通过它输出控制台日志）
+3. **基础层**：`util.js` → `store.js` → `markdown.js` → `model-metadata.js` → `network-stability.js`
+4. **API 层**：`api.js` → `image-api.js`
+5. **Agent 工具**：`tools/registry.js` → `tools/workspace.js` → 各工具文件 → `tools.js`（门面，暴露 `window.Tools`）
+6. **应用层**：`app-helpers.js` → `theme-system.js` → `app-options.js` → `app-methods-*.js` → `app.js`
 
 > 新增脚本必须插在正确位置；`tools.js` 门面依赖 `WepChatTools` 已完整加载，`app.js` 依赖所有 `app-methods-*` 已挂到 `window`。
 
@@ -106,7 +97,16 @@ Vue 根选项定义在 `app-options.js`；`methods` 通过解构 `window.WepChat
 - `wepchat.config.json.template`：带注释（JSONC）的配置模板，含全部配置项；实际使用复制为 `wepchat.config.json`（已加入 `.gitignore`）放到服务器。
 - 应用侧逻辑在 `app-methods-core.js`：`fetchRemoteConfig()` 用 XHR GET 拉取 URL，`stripJsonComments()` 剥离 `//` 与 `/* */` 注释后再 `JSON.parse`；`applyRemoteConfigAsDefaults()` 与现有设置合并（含 providers 去重/规范化）后持久化。
 - `server.py`：本地静态服务器，为所有响应加 CORS 头并处理 `OPTIONS` 预检，解决 WebView / 浏览器拉取远程配置时的跨域拦截（默认端口 8765）。
----
+
+### 3.8 控制台埋点日志（`js/logger.js`）
+统一日志模块 `WLog`，所有核心模块通过它输出结构化控制台日志，方便排查问题。
+- **分级**：`debug / info / warn / error`，可通过 `WLog.level = 'warn'` 调整 verbosity。
+- **格式**：`[WepChat][HH:MM:SS.mmm][Tag] message`，带毫秒级时间戳和模块标签。
+- **自动脱敏**：JSON 序列化时 `apiKey / api_key / secret / password / hash / salt / authorization` 字段替换为 `***REDACTED***`，防止敏感信息泄露到控制台。
+- **超长截断**：>300 字符的字符串自动截断，避免 base64 图片数据刷屏。
+- **计时辅助**：`const end = WLog.time('API'); ... end('done')` 输出耗时。
+- **覆盖模块**：`api.js`（SSE/HTTP）、`store.js`（IndexedDB/localStorage）、`network-stability.js`（重试）、`app-methods-generation.js`（生成流程/工具调用）、`image-api.js`（图片生成降级）、`tools/registry.js`（工具执行）、`util.js`（文件操作）、`app-methods-sessions.js`（会话切换）。
+- **加载顺序**：在 `index.html` 中位于第三方库之后、所有业务脚本之前，确保全局可用。
 
 ## 4. 手机端文档（`docs/`）
 - `app-js-split-plan.md` / `tools-js-split-plan.md`：历史重构（拆分 app.js / tools.js）的设计与实施记录。
@@ -145,3 +145,4 @@ cp wepchat.config.json.template wepchat.config.json
 ## 7. 给后续 agent 的提示
 1. 手机端是**普通 `<script>` 全局脚本**，新增文件要按 §3.1 顺序插入 `index.html`，并挂到正确的 `window` 命名空间。
 2. 新增脚本必须插在正确位置；`tools.js` 门面依赖 `WepChatTools` 已完整加载，`app.js` 依赖所有 `app-methods-*` 已挂到 `window`。
+3. 新增关键路径代码应使用 `WLog`（§3.8）添加埋点日志，避免直接使用 `console.log`；涉及敏感对象的日志由 WLog 自动脱敏。

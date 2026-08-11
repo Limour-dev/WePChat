@@ -2,6 +2,7 @@
 'use strict';
 
 const Store = {
+  _L: window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } },
   KEY_SETTINGS: 'wc.settings',
   KEY_PROVIDERS: 'wc.providers',
   KEY_INDEX: 'wc.sessions',
@@ -22,12 +23,13 @@ const Store = {
         this._openDb(),
         new Promise(resolve => setTimeout(() => resolve(null), 3000))
       ]);
-    } catch (e) { this._db = null; }
+    } catch (e) { this._L.error('Store', 'IndexedDB open failed: ' + e.message); this._db = null; }
     if (this._db) {
       try {
         const rows = await this._idbAll();
+        this._L.info('Store', 'IndexedDB loaded ' + rows.length + ' keys');
         rows.forEach(r => this._cache.set(r.key, r.value));
-      } catch (e) {}
+      } catch (e) { this._L.error('Store', 'IndexedDB preload failed: ' + e.message); }
     }
     this._migrateFromLocalStorage();
   },
@@ -205,12 +207,12 @@ const Store = {
 
   _set(key, val) {
     let raw;
-    try { raw = JSON.stringify(val); } catch (e) { return false; }
+    try { raw = JSON.stringify(val); } catch (e) { this._L.error('Store', 'JSON stringify failed for ' + key + ': ' + e.message); return false; }
     this._cache.set(key, raw);
     if (this._db) {
       let p;
       p = this._idbPut(key, raw)
-        .catch(() => { U.toast('保存失败：应用存储写入异常'); })
+        .catch(e => { this._L.error('Store', 'IDB write failed for ' + key + ': ' + e.message); U.toast('保存失败：应用存储写入异常'); })
         .finally(() => { this._pendingWrites.delete(p); });
       this._pendingWrites.add(p);
       return true;
@@ -220,6 +222,7 @@ const Store = {
       localStorage.setItem(key, raw);
       return true;
     } catch (e) {
+      this._L.error('Store', 'localStorage write failed for ' + key + ': ' + e.message);
       U.toast('应用本地存储已满，写入失败');
       return false;
     }

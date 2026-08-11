@@ -2,6 +2,7 @@
 'use strict';
 
 (function () {
+  const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } };
   const RETRY_DELAYS = [800, 1600, 3200, 6400, 10000];
 
   function createError(code, message, meta) {
@@ -58,6 +59,7 @@
   async function retry(operation, options) {
     options = options || {};
     const retries = options.retries == null ? 5 : Math.max(0, Number(options.retries) || 0);
+    L.debug('Retry', 'start maxRetries=' + retries);
     let lastError;
     for (let attempt = 0; attempt <= retries; attempt++) {
       if (options.signal && options.signal.aborted) throw createError('NET-ABORTED', '用户已停止请求');
@@ -65,14 +67,17 @@
         return await operation(attempt);
       } catch (err) {
         lastError = normalizeError(err, options.fallbackCode);
+        L.warn('Retry', 'attempt=' + attempt + ' code=' + lastError.code + ' msg=' + lastError.message);
         const canRetry = attempt < retries && (options.shouldRetry ? options.shouldRetry(lastError, attempt) : isRetryable(lastError));
         if (!canRetry) {
+          L.error('Retry', 'exhausted at attempt=' + attempt + ' code=' + lastError.code);
           lastError.attempt = attempt;
           lastError.max = retries;
           throw lastError;
         }
         const nextAttempt = attempt + 1;
         const delay = delayFor(nextAttempt);
+        L.info('Retry', 'scheduling retry #' + nextAttempt + ' delay=' + delay + 'ms code=' + lastError.code);
         if (options.onStatus) options.onStatus({
           state: 'retrying',
           code: lastError.code,

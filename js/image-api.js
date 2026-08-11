@@ -2,6 +2,7 @@
 'use strict';
 
 const ImageAPI = (() => {
+  const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } };
   function normBase(base) {
     return String(base || '').trim().replace(/\/+$/, '');
   }
@@ -635,6 +636,7 @@ const ImageAPI = (() => {
   async function generate(ctx) {
     const settings = ctx.settings || {};
     const mode = settings.apiMode || 'auto';
+    L.info('ImageAPI', 'generate mode=' + ctx.mode + ' apiMode=' + mode + ' model=' + ctx.model + ' promptLen=' + (ctx.prompt || '').length);
     if (ctx.mode === 'edit') {
       return await editViaImages(ctx);
     }
@@ -643,15 +645,17 @@ const ImageAPI = (() => {
       mode === 'responses' ? ['responses'] :
       mode === 'images' ? ['images'] :
       imageOnly ? ['images'] : ['images', 'chat', 'responses'];
+    L.info('ImageAPI', 'fallback order: ' + order.join(' -> '));
     const errors = [];
     for (const step of order) {
       try {
         const res = step === 'chat' ? await generateViaChat(ctx) : step === 'responses' ? await generateViaResponses(ctx) : await generateViaImages(ctx);
-        if (res.images && res.images.length) return res;
+        if (res.images && res.images.length) { L.info('ImageAPI', 'step=' + step + ' success images=' + res.images.length); return res; }
+        L.warn('ImageAPI', 'step=' + step + ' no images returned');
         errors.push(step + (res.url ? ' @ ' + res.url : '') + ': 接口未返回图片' + (res.preview ? '\n返回摘要：' + res.preview : ''));
       } catch (e) {
+        L.error('ImageAPI', 'step=' + step + ' error: ' + (e && e.message || String(e)) + ' code=' + (e && e.code || ''));
         const line = step + (e && e.url ? ' @ ' + e.url : '') + ': ' + (e && e.message || String(e));
-        errors.push(line);
         if (e && /^(IMAGE-SUBMIT-UNKNOWN|IMAGE-TOO-LARGE|IMAGE-DOWNLOAD-|IMAGE-TASK-|NET-ABORTED)/.test(e.code || '')) throw e;
         if (mode !== 'auto') {
           const err = new Error('图片生成失败：' + line);

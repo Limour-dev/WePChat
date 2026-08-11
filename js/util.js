@@ -2,6 +2,7 @@
 'use strict';
 
 const U = {
+  _L: window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } },
   uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
       const r = Math.random() * 16 | 0;
@@ -462,6 +463,7 @@ const U = {
 
   /* 保存 Blob 到设备。浏览器优先弹保存文件对话框；plus 环境写入公共下载目录。 */
   async saveBlobFile(filename, blob, opts) {
+    U._L.info('File', 'saveBlobFile name=' + filename + ' size=' + (blob && blob.size || 0) + ' type=' + (blob && blob.type || ''));
     const name = U._safeExportName(filename);
     const usePicker = !opts || opts.picker !== false;
     if (usePicker) {

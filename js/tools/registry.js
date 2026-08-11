@@ -2,7 +2,7 @@
 'use strict';
 
 (() => {
-
+  const L = window.WLog || { debug(){}, info(){}, warn(){}, error(){}, time(){ return ()=>{}; } };
   const entries = new Map();
   const definitions = [];
 
@@ -58,15 +58,19 @@
    * 返回字符串（作为 tool result 回传给模型） */
 
   registry.execute = async function (name, argsJson, ctx) {
+    L.info('Tool', 'execute name=' + name);
     let args = {};
     try { args = typeof argsJson === 'string' ? (argsJson.trim() ? JSON.parse(argsJson) : {}) : (argsJson || {}); }
-    catch (e) { return '错误：工具参数不是有效 JSON - ' + e.message; }
+    catch (e) { L.error('Tool', 'JSON parse error for ' + name + ': ' + e.message); return '错误：工具参数不是有效 JSON - ' + e.message; }
     args = resolveToolReferences(args, ctx || {}, name, '');
     const spec = entries.get(name);
-    if (!spec) return '错误：未知工具 ' + name;
+    if (!spec) { L.error('Tool', 'unknown tool: ' + name); return '错误：未知工具 ' + name; }
     try {
-      return await spec.execute(args, ctx || {});
+      const result = await spec.execute(args, ctx || {});
+      L.info('Tool', 'done name=' + name + ' resultLen=' + String(result || '').length);
+      return result;
     } catch (e) {
+      L.error('Tool', 'error name=' + name + ': ' + (e && e.message || String(e)));
       return '错误：' + (e && e.message || String(e));
     }
   };
